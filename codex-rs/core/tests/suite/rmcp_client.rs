@@ -36,6 +36,7 @@ use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::user_input::UserInput;
 use codex_utils_cargo_bin::cargo_bin;
 use core_test_support::assert_regex_match;
+use core_test_support::remote_env_env_var;
 use core_test_support::responses;
 use core_test_support::responses::ev_custom_tool_call;
 use core_test_support::responses::mount_models_once;
@@ -52,7 +53,6 @@ use serde_json::Value;
 use serde_json::json;
 use serial_test::serial;
 use tempfile::tempdir;
-use test_case::test_case;
 use tokio::process::Child;
 use tokio::process::Command;
 use tokio::time::Instant;
@@ -89,19 +89,10 @@ enum McpCallEvent {
     End(String),
 }
 
-#[derive(Clone, Copy, Debug)]
-enum StdioMcpTestEnvironment {
-    Local,
-    Remote,
-}
+const REMOTE_MCP_ENVIRONMENT: &str = "remote";
 
-impl StdioMcpTestEnvironment {
-    fn experimental_environment(self) -> Option<String> {
-        match self {
-            Self::Local => None,
-            Self::Remote => Some("remote".to_string()),
-        }
-    }
+fn remote_aware_experimental_environment() -> Option<String> {
+    std::env::var_os(remote_env_env_var()).map(|_| REMOTE_MCP_ENVIRONMENT.to_string())
 }
 
 async fn wait_for_mcp_tool(fixture: &TestCodex, tool_name: &str) -> anyhow::Result<()> {
@@ -182,11 +173,9 @@ fn insert_mcp_server(
     }
 }
 
-#[test_case(StdioMcpTestEnvironment::Local ; "local")]
-#[test_case(StdioMcpTestEnvironment::Remote ; "remote")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[serial(mcp_test_value)]
-async fn stdio_server_round_trip(stdio_environment: StdioMcpTestEnvironment) -> anyhow::Result<()> {
+async fn stdio_server_round_trip() -> anyhow::Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = responses::start_mock_server().await;
@@ -235,12 +224,12 @@ async fn stdio_server_round_trip(stdio_environment: StdioMcpTestEnvironment) -> 
                     Vec::new(),
                 ),
                 TestMcpServerOptions {
-                    experimental_environment: stdio_environment.experimental_environment(),
+                    experimental_environment: remote_aware_experimental_environment(),
                     ..Default::default()
                 },
             );
         })
-        .build(&server)
+        .build_remote_aware(&server)
         .await?;
     let session_model = fixture.session_configured.model.clone();
 
@@ -337,12 +326,8 @@ async fn stdio_server_round_trip(stdio_environment: StdioMcpTestEnvironment) -> 
     Ok(())
 }
 
-#[test_case(StdioMcpTestEnvironment::Local ; "local")]
-#[test_case(StdioMcpTestEnvironment::Remote ; "remote")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn stdio_mcp_tool_call_includes_sandbox_state_meta(
-    stdio_environment: StdioMcpTestEnvironment,
-) -> anyhow::Result<()> {
+async fn stdio_mcp_tool_call_includes_sandbox_state_meta() -> anyhow::Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = responses::start_mock_server().await;
@@ -378,12 +363,12 @@ async fn stdio_mcp_tool_call_includes_sandbox_state_meta(
                 server_name,
                 stdio_transport(rmcp_test_server_bin, /*env*/ None, Vec::new()),
                 TestMcpServerOptions {
-                    experimental_environment: stdio_environment.experimental_environment(),
+                    experimental_environment: remote_aware_experimental_environment(),
                     ..Default::default()
                 },
             );
         })
-        .build(&server)
+        .build_remote_aware(&server)
         .await?;
 
     let tools_ready_deadline = Instant::now() + Duration::from_secs(30);
@@ -454,12 +439,8 @@ async fn stdio_mcp_tool_call_includes_sandbox_state_meta(
     Ok(())
 }
 
-#[test_case(StdioMcpTestEnvironment::Local ; "local")]
-#[test_case(StdioMcpTestEnvironment::Remote ; "remote")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn stdio_mcp_parallel_tool_calls_default_false_runs_serially(
-    stdio_environment: StdioMcpTestEnvironment,
-) -> anyhow::Result<()> {
+async fn stdio_mcp_parallel_tool_calls_default_false_runs_serially() -> anyhow::Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = responses::start_mock_server().await;
@@ -498,13 +479,13 @@ async fn stdio_mcp_parallel_tool_calls_default_false_runs_serially(
                 server_name,
                 stdio_transport(rmcp_test_server_bin, /*env*/ None, Vec::new()),
                 TestMcpServerOptions {
-                    experimental_environment: stdio_environment.experimental_environment(),
+                    experimental_environment: remote_aware_experimental_environment(),
                     tool_timeout_sec: Some(Duration::from_secs(2)),
                     ..Default::default()
                 },
             );
         })
-        .build(&server)
+        .build_remote_aware(&server)
         .await?;
     let session_model = fixture.session_configured.model.clone();
 
@@ -582,12 +563,8 @@ async fn stdio_mcp_parallel_tool_calls_default_false_runs_serially(
     Ok(())
 }
 
-#[test_case(StdioMcpTestEnvironment::Local ; "local")]
-#[test_case(StdioMcpTestEnvironment::Remote ; "remote")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn stdio_mcp_parallel_tool_calls_opt_in_runs_concurrently(
-    stdio_environment: StdioMcpTestEnvironment,
-) -> anyhow::Result<()> {
+async fn stdio_mcp_parallel_tool_calls_opt_in_runs_concurrently() -> anyhow::Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = responses::start_mock_server().await;
@@ -634,13 +611,13 @@ async fn stdio_mcp_parallel_tool_calls_opt_in_runs_concurrently(
                 server_name,
                 stdio_transport(rmcp_test_server_bin, /*env*/ None, Vec::new()),
                 TestMcpServerOptions {
-                    experimental_environment: stdio_environment.experimental_environment(),
+                    experimental_environment: remote_aware_experimental_environment(),
                     supports_parallel_tool_calls: true,
                     tool_timeout_sec: Some(Duration::from_secs(2)),
                 },
             );
         })
-        .build(&server)
+        .build_remote_aware(&server)
         .await?;
     let session_model = fixture.session_configured.model.clone();
 
@@ -683,13 +660,9 @@ async fn stdio_mcp_parallel_tool_calls_opt_in_runs_concurrently(
     Ok(())
 }
 
-#[test_case(StdioMcpTestEnvironment::Local ; "local")]
-#[test_case(StdioMcpTestEnvironment::Remote ; "remote")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[serial(mcp_test_value)]
-async fn stdio_image_responses_round_trip(
-    stdio_environment: StdioMcpTestEnvironment,
-) -> anyhow::Result<()> {
+async fn stdio_image_responses_round_trip() -> anyhow::Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = responses::start_mock_server().await;
@@ -736,12 +709,12 @@ async fn stdio_image_responses_round_trip(
                     Vec::new(),
                 ),
                 TestMcpServerOptions {
-                    experimental_environment: stdio_environment.experimental_environment(),
+                    experimental_environment: remote_aware_experimental_environment(),
                     ..Default::default()
                 },
             );
         })
-        .build(&server)
+        .build_remote_aware(&server)
         .await?;
     let session_model = fixture.session_configured.model.clone();
 
@@ -841,13 +814,9 @@ async fn stdio_image_responses_round_trip(
     Ok(())
 }
 
-#[test_case(StdioMcpTestEnvironment::Local ; "local")]
-#[test_case(StdioMcpTestEnvironment::Remote ; "remote")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[serial(mcp_test_value)]
-async fn stdio_image_responses_preserve_original_detail_metadata(
-    stdio_environment: StdioMcpTestEnvironment,
-) -> anyhow::Result<()> {
+async fn stdio_image_responses_preserve_original_detail_metadata() -> anyhow::Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = responses::start_mock_server().await;
@@ -890,12 +859,12 @@ async fn stdio_image_responses_preserve_original_detail_metadata(
                 server_name,
                 stdio_transport(rmcp_test_server_bin, /*env*/ None, Vec::new()),
                 TestMcpServerOptions {
-                    experimental_environment: stdio_environment.experimental_environment(),
+                    experimental_environment: remote_aware_experimental_environment(),
                     ..Default::default()
                 },
             );
         })
-        .build(&server)
+        .build_remote_aware(&server)
         .await?;
     let session_model = fixture.session_configured.model.clone();
 
@@ -947,13 +916,9 @@ async fn stdio_image_responses_preserve_original_detail_metadata(
     Ok(())
 }
 
-#[test_case(StdioMcpTestEnvironment::Local ; "local")]
-#[test_case(StdioMcpTestEnvironment::Remote ; "remote")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[serial(mcp_test_value)]
-async fn js_repl_emit_image_preserves_original_detail_for_mcp_images(
-    stdio_environment: StdioMcpTestEnvironment,
-) -> anyhow::Result<()> {
+async fn js_repl_emit_image_preserves_original_detail_for_mcp_images() -> anyhow::Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = responses::start_mock_server().await;
@@ -972,12 +937,12 @@ async fn js_repl_emit_image_preserves_original_detail_for_mcp_images(
                 "rmcp",
                 stdio_transport(rmcp_test_server_bin, /*env*/ None, Vec::new()),
                 TestMcpServerOptions {
-                    experimental_environment: stdio_environment.experimental_environment(),
+                    experimental_environment: remote_aware_experimental_environment(),
                     ..Default::default()
                 },
             );
         })
-        .build(&server)
+        .build_remote_aware(&server)
         .await?;
 
     wait_for_mcp_tool(&fixture, "mcp__rmcp__image_scenario").await?;
@@ -1038,13 +1003,9 @@ await codex.emitImage(imageItem);
     Ok(())
 }
 
-#[test_case(StdioMcpTestEnvironment::Local ; "local")]
-#[test_case(StdioMcpTestEnvironment::Remote ; "remote")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[serial(mcp_test_value)]
-async fn stdio_image_responses_are_sanitized_for_text_only_model(
-    stdio_environment: StdioMcpTestEnvironment,
-) -> anyhow::Result<()> {
+async fn stdio_image_responses_are_sanitized_for_text_only_model() -> anyhow::Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = responses::start_mock_server().await;
@@ -1133,12 +1094,12 @@ async fn stdio_image_responses_are_sanitized_for_text_only_model(
                     Vec::new(),
                 ),
                 TestMcpServerOptions {
-                    experimental_environment: stdio_environment.experimental_environment(),
+                    experimental_environment: remote_aware_experimental_environment(),
                     ..Default::default()
                 },
             );
         })
-        .build(&server)
+        .build_remote_aware(&server)
         .await?;
 
     fixture
@@ -1198,13 +1159,9 @@ async fn stdio_image_responses_are_sanitized_for_text_only_model(
     Ok(())
 }
 
-#[test_case(StdioMcpTestEnvironment::Local ; "local")]
-#[test_case(StdioMcpTestEnvironment::Remote ; "remote")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[serial(mcp_test_value)]
-async fn stdio_server_propagates_whitelisted_env_vars(
-    stdio_environment: StdioMcpTestEnvironment,
-) -> anyhow::Result<()> {
+async fn stdio_server_propagates_whitelisted_env_vars() -> anyhow::Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = responses::start_mock_server().await;
@@ -1251,12 +1208,12 @@ async fn stdio_server_propagates_whitelisted_env_vars(
                     vec!["MCP_TEST_VALUE".to_string()],
                 ),
                 TestMcpServerOptions {
-                    experimental_environment: stdio_environment.experimental_environment(),
+                    experimental_environment: remote_aware_experimental_environment(),
                     ..Default::default()
                 },
             );
         })
-        .build(&server)
+        .build_remote_aware(&server)
         .await?;
     let session_model = fixture.session_configured.model.clone();
 
