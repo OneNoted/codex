@@ -85,6 +85,10 @@ pub(super) struct ExecutorProcessTransport {
 
 impl ExecutorProcessTransport {
     pub(super) fn new(process: Arc<dyn ExecProcess>, program_name: String) -> Self {
+        // Subscribe before returning the transport to rmcp. Some test servers
+        // can emit output or exit quickly after `process/start`, and the
+        // process event log will replay anything that landed before this
+        // subscriber was attached.
         let events = process.subscribe_events();
         Self {
             process,
@@ -161,6 +165,9 @@ impl ExecutorProcessTransport {
 
             match self.events.recv().await {
                 Ok(ExecProcessEvent::Output(chunk)) => {
+                    // The executor pushes raw process bytes. This is the only
+                    // place where those bytes are split back into the stdout
+                    // protocol stream and stderr diagnostics.
                     self.push_process_output(chunk);
                 }
                 Ok(ExecProcessEvent::Exited { .. }) => {

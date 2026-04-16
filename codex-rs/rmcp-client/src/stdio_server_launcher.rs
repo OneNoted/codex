@@ -83,6 +83,10 @@ pub struct StdioServerCommand {
 /// directly to `rmcp::service::serve_client`.
 pub struct StdioServerTransport {
     inner: StdioServerTransportInner,
+    // Local child processes can leave subprocesses behind, so the local
+    // variant keeps a process-group guard with the transport. Executor-backed
+    // processes are owned and cleaned up by the executor, so that variant uses
+    // `None`.
     _process_group_guard: Option<ProcessGroupGuard>,
 }
 
@@ -98,6 +102,9 @@ impl Transport<RoleClient> for StdioServerTransport {
         &mut self,
         item: TxJsonRpcMessage<RoleClient>,
     ) -> impl Future<Output = std::result::Result<(), Self::Error>> + Send + 'static {
+        // Both variants already implement rmcp's transport contract. This
+        // wrapper keeps process placement private while leaving rmcp's send
+        // semantics unchanged.
         match &mut self.inner {
             StdioServerTransportInner::Local(transport) => transport.send(item).boxed(),
             StdioServerTransportInner::Executor(transport) => transport.send(item).boxed(),
@@ -105,6 +112,9 @@ impl Transport<RoleClient> for StdioServerTransport {
     }
 
     fn receive(&mut self) -> impl Future<Output = Option<RxJsonRpcMessage<RoleClient>>> + Send {
+        // rmcp reads from the same transport shape for both placements. The
+        // executor variant turns pushed process-output events back into the
+        // line-delimited JSON stream expected by rmcp.
         match &mut self.inner {
             StdioServerTransportInner::Local(transport) => transport.receive().boxed(),
             StdioServerTransportInner::Executor(transport) => transport.receive().boxed(),

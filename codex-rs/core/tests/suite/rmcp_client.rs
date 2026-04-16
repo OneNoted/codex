@@ -110,6 +110,10 @@ fn remote_aware_stdio_server_bin() -> anyhow::Result<String> {
         .into_string()
         .map_err(|value| anyhow::anyhow!("remote env container name must be utf-8: {value:?}"))?;
 
+    // Keep the Docker path rewrite scoped to tests that use `build_remote_aware`.
+    // Other MCP tests still start their stdio server from the orchestrator test
+    // process, even when the full-ci remote env is present.
+    //
     // Remote-aware MCP tests run the executor inside Docker. The stdio test
     // server is built on the host, so hand the executor a copied in-container
     // path instead of the host build artifact path.
