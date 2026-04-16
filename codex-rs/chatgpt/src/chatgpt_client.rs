@@ -1,5 +1,7 @@
 use codex_core::config::Config;
+use codex_core::config::Feature;
 use codex_login::AuthManager;
+use codex_login::BackgroundAgentTaskAuthMode;
 use codex_login::BackgroundAgentTaskManager;
 use codex_login::default_client::create_client;
 use codex_protocol::protocol::SessionSource;
@@ -40,10 +42,13 @@ pub(crate) async fn chatgpt_get_request_with_timeout<T: DeserializeOwned>(
         config.cli_auth_credentials_store_mode,
     );
     let authorization_header_value = match auth_manager.auth().await {
-        Some(auth) if auth.is_chatgpt_auth() => BackgroundAgentTaskManager::new(
+        Some(auth) if auth.is_chatgpt_auth() => BackgroundAgentTaskManager::new_with_auth_mode(
             auth_manager,
             config.chatgpt_base_url.clone(),
             SessionSource::Cli,
+            BackgroundAgentTaskAuthMode::from_feature_enabled(
+                config.features.enabled(Feature::UseAgentIdentity),
+            ),
         )
         .authorization_header_value_or_bearer(&auth)
         .await

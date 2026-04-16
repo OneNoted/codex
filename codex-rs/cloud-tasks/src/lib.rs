@@ -70,12 +70,14 @@ async fn init_backend(user_agent_suffix: &str) -> anyhow::Result<BackendContext>
     };
     append_error_log(format!("startup: base_url={base_url} path_style={style}"));
 
-    let Some(auth_manager) = util::load_auth_manager().await.map(Arc::new) else {
+    let Some((auth_manager, background_agent_task_auth_mode)) = util::load_auth_context().await
+    else {
         eprintln!(
             "Not signed in. Please run 'codex login' to sign in with ChatGPT, then re-run 'codex cloud'."
         );
         std::process::exit(1);
     };
+    let auth_manager = Arc::new(auth_manager);
     let Some(auth) = auth_manager.auth().await else {
         eprintln!(
             "Not signed in. Please run 'codex login' to sign in with ChatGPT, then re-run 'codex cloud'."
@@ -87,10 +89,11 @@ async fn init_backend(user_agent_suffix: &str) -> anyhow::Result<BackendContext>
         append_error_log(format!("auth: mode=ChatGPT account_id={acc}"));
     }
 
-    let authorization_header_value = BackgroundAgentTaskManager::new(
+    let authorization_header_value = BackgroundAgentTaskManager::new_with_auth_mode(
         Arc::clone(&auth_manager),
         base_url.clone(),
         SessionSource::Cli,
+        background_agent_task_auth_mode,
     )
     .authorization_header_value_or_bearer(&auth)
     .await;

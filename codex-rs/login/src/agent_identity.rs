@@ -58,8 +58,8 @@ impl std::fmt::Debug for BackgroundAgentTaskManager {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum BackgroundAgentTaskAuthMode {
-    #[default]
     Enabled,
+    #[default]
     Disabled,
 }
 
@@ -150,7 +150,7 @@ impl BackgroundAgentTaskManager {
             auth_manager,
             chatgpt_base_url,
             session_source,
-            BackgroundAgentTaskAuthMode::Enabled,
+            BackgroundAgentTaskAuthMode::Disabled,
         )
     }
 
@@ -469,7 +469,12 @@ impl BackgroundAgentTaskManager {
 
 pub fn cached_background_agent_task_authorization_header_value(
     auth: &CodexAuth,
+    auth_mode: BackgroundAgentTaskAuthMode,
 ) -> Result<Option<String>> {
+    if !auth_mode.is_enabled() {
+        return Ok(None);
+    }
+
     let Some(binding) = AgentIdentityBinding::from_auth(auth, /*forced_workspace_id*/ None) else {
         return Ok(None);
     };
@@ -807,5 +812,57 @@ mod tests {
             .expect("disabled manager should not fail");
 
         assert_eq!(None, authorization_header_value);
+    }
+
+    #[tokio::test]
+    async fn default_background_agent_task_auth_returns_none_for_supported_host() {
+        let auth = CodexAuth::create_dummy_chatgpt_auth_for_testing();
+        let auth_manager = AuthManager::from_auth_for_testing(auth.clone());
+        let manager = BackgroundAgentTaskManager::new(
+            auth_manager,
+            "https://chatgpt.com/backend-api".to_string(),
+            SessionSource::Cli,
+        );
+
+        let authorization_header_value = manager
+            .authorization_header_value_for_auth(&auth)
+            .await
+            .expect("default manager should not fail");
+
+        assert_eq!(None, authorization_header_value);
+    }
+
+    #[test]
+    fn cached_background_agent_task_auth_honors_disabled_mode() {
+        let auth = CodexAuth::create_dummy_chatgpt_auth_for_testing();
+        let key_material = generate_agent_key_material().expect("generate key material");
+        auth.set_agent_identity(AgentIdentityAuthRecord {
+            workspace_id: "account_id".to_string(),
+            chatgpt_user_id: None,
+            agent_runtime_id: "agent_123".to_string(),
+            agent_private_key: key_material.private_key_pkcs8_base64,
+            registered_at: "2026-04-13T12:00:00Z".to_string(),
+            background_task: Some(AgentBackgroundTaskAuthRecord {
+                task_id: "task_123".to_string(),
+                registered_at: "2026-04-13T12:00:01Z".to_string(),
+            }),
+        })
+        .expect("set agent identity");
+
+        let disabled_authorization_header_value =
+            cached_background_agent_task_authorization_header_value(
+                &auth,
+                BackgroundAgentTaskAuthMode::Disabled,
+            )
+            .expect("disabled cached auth should not fail");
+        let enabled_authorization_header_value =
+            cached_background_agent_task_authorization_header_value(
+                &auth,
+                BackgroundAgentTaskAuthMode::Enabled,
+            )
+            .expect("enabled cached auth should not fail");
+
+        assert_eq!(None, disabled_authorization_header_value);
+        assert!(enabled_authorization_header_value.is_some());
     }
 }

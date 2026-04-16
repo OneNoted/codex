@@ -6,6 +6,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use codex_login::BackgroundAgentTaskAuthMode;
 use codex_login::CodexAuth;
 use codex_login::cached_background_agent_task_authorization_header_value;
 use codex_login::default_client::build_reqwest_client;
@@ -202,7 +203,10 @@ pub async fn export_remote_skill(
 
 fn authorization_header_value_for_auth(auth: &CodexAuth) -> std::io::Result<String> {
     if let Ok(Some(authorization_header_value)) =
-        cached_background_agent_task_authorization_header_value(auth)
+        cached_background_agent_task_authorization_header_value(
+            auth,
+            BackgroundAgentTaskAuthMode::Disabled,
+        )
     {
         Ok(authorization_header_value)
     } else {

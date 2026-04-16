@@ -48,7 +48,7 @@ use codex_config::types::ToolSuggestDiscoverable;
 use codex_config::types::TuiNotificationSettings;
 use codex_config::types::UriBasedFileOpener;
 use codex_config::types::WindowsSandboxModeToml;
-use codex_features::Feature;
+pub use codex_features::Feature;
 use codex_features::FeatureConfigSource;
 use codex_features::FeatureOverrides;
 use codex_features::FeatureToml;

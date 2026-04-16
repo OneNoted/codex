@@ -770,7 +770,7 @@ pub fn cloud_requirements_loader_for_storage(
         auth_manager,
         chatgpt_base_url,
         codex_home,
-        BackgroundAgentTaskAuthMode::Enabled,
+        BackgroundAgentTaskAuthMode::Disabled,
     )
 }
 

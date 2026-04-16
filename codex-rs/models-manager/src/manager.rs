@@ -14,6 +14,7 @@ use codex_feedback::FeedbackRequestTags;
 use codex_feedback::emit_feedback_request_tags_with_auth_env;
 use codex_login::AuthEnvTelemetry;
 use codex_login::AuthManager;
+use codex_login::BackgroundAgentTaskAuthMode;
 use codex_login::BackgroundAgentTaskManager;
 use codex_login::CodexAuth;
 use codex_login::auth_provider_from_auth;
@@ -185,6 +186,7 @@ pub struct ModelsManager {
     etag: RwLock<Option<String>>,
     cache_manager: ModelsCacheManager,
     provider: ModelProviderInfo,
+    background_agent_task_auth_mode: BackgroundAgentTaskAuthMode,
 }
 
 impl ModelsManager {
@@ -199,12 +201,31 @@ impl ModelsManager {
         model_catalog: Option<ModelsResponse>,
         collaboration_modes_config: CollaborationModesConfig,
     ) -> Self {
-        Self::new_with_provider(
+        Self::new_with_background_agent_task_auth_mode(
+            codex_home,
+            auth_manager,
+            model_catalog,
+            collaboration_modes_config,
+            BackgroundAgentTaskAuthMode::Disabled,
+        )
+    }
+
+    /// Construct a manager scoped to the provided `AuthManager`, with explicit
+    /// background agent task auth behavior.
+    pub fn new_with_background_agent_task_auth_mode(
+        codex_home: PathBuf,
+        auth_manager: Arc<AuthManager>,
+        model_catalog: Option<ModelsResponse>,
+        collaboration_modes_config: CollaborationModesConfig,
+        background_agent_task_auth_mode: BackgroundAgentTaskAuthMode,
+    ) -> Self {
+        Self::new_with_provider_and_background_agent_task_auth_mode(
             codex_home,
             auth_manager,
             model_catalog,
             collaboration_modes_config,
             ModelProviderInfo::create_openai_provider(/*base_url*/ None),
+            background_agent_task_auth_mode,
         )
     }
 
@@ -215,6 +236,26 @@ impl ModelsManager {
         model_catalog: Option<ModelsResponse>,
         collaboration_modes_config: CollaborationModesConfig,
         provider: ModelProviderInfo,
+    ) -> Self {
+        Self::new_with_provider_and_background_agent_task_auth_mode(
+            codex_home,
+            auth_manager,
+            model_catalog,
+            collaboration_modes_config,
+            provider,
+            BackgroundAgentTaskAuthMode::Disabled,
+        )
+    }
+
+    /// Construct a manager with an explicit provider and background agent task
+    /// auth behavior used for remote model refreshes.
+    pub fn new_with_provider_and_background_agent_task_auth_mode(
+        codex_home: PathBuf,
+        auth_manager: Arc<AuthManager>,
+        model_catalog: Option<ModelsResponse>,
+        collaboration_modes_config: CollaborationModesConfig,
+        provider: ModelProviderInfo,
+        background_agent_task_auth_mode: BackgroundAgentTaskAuthMode,
     ) -> Self {
         let auth_manager = required_auth_manager_for_provider(auth_manager, &provider);
         let cache_path = codex_home.join(MODEL_CACHE_FILE);
@@ -235,6 +276,7 @@ impl ModelsManager {
             etag: RwLock::new(None),
             cache_manager,
             provider,
+            background_agent_task_auth_mode,
         }
     }
 
@@ -441,13 +483,15 @@ impl ModelsManager {
         let mut api_auth = auth_provider_from_auth(auth.clone(), &self.provider)?;
         if let Some(auth) = auth.as_ref().filter(|auth| auth.is_chatgpt_auth())
             && provider_uses_codex_login_auth(&self.provider)
-            && let Some(authorization_header_value) = BackgroundAgentTaskManager::new(
-                Arc::clone(&self.auth_manager),
-                api_provider.base_url.clone(),
-                SessionSource::Cli,
-            )
-            .authorization_header_value_or_bearer(auth)
-            .await
+            && let Some(authorization_header_value) =
+                BackgroundAgentTaskManager::new_with_auth_mode(
+                    Arc::clone(&self.auth_manager),
+                    api_provider.base_url.clone(),
+                    SessionSource::Cli,
+                    self.background_agent_task_auth_mode,
+                )
+                .authorization_header_value_or_bearer(auth)
+                .await
         {
             api_auth = CoreAuthProvider::from_authorization_header_value(
                 Some(authorization_header_value),

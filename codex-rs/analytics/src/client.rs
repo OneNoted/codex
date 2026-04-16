@@ -138,7 +138,7 @@ impl AnalyticsEventsClient {
             auth_manager,
             base_url,
             analytics_enabled,
-            BackgroundAgentTaskAuthMode::Enabled,
+            BackgroundAgentTaskAuthMode::Disabled,
         )
     }
 
