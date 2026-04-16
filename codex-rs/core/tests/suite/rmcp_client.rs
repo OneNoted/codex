@@ -1,11 +1,14 @@
 #![allow(clippy::expect_used)]
 
+use anyhow::Context as _;
+use anyhow::ensure;
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::ffi::OsString;
 use std::fs;
 use std::net::TcpListener;
 use std::path::Path;
+use std::process::Command as StdCommand;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::SystemTime;
@@ -96,6 +99,47 @@ fn remote_aware_experimental_environment() -> Option<String> {
     // executor in full-ci. Match that shared test environment instead of
     // parameterizing each stdio MCP test with its own local/remote cases.
     std::env::var_os(remote_env_env_var()).map(|_| REMOTE_MCP_ENVIRONMENT.to_string())
+}
+
+fn remote_aware_stdio_server_bin() -> anyhow::Result<String> {
+    let bin = stdio_server_bin()?;
+    let Some(container_name) = std::env::var_os(remote_env_env_var()) else {
+        return Ok(bin);
+    };
+    let container_name = container_name
+        .into_string()
+        .map_err(|value| anyhow::anyhow!("remote env container name must be utf-8: {value:?}"))?;
+
+    // Remote-aware MCP tests run the executor inside Docker. The stdio test
+    // server is built on the host, so hand the executor a copied in-container
+    // path instead of the host build artifact path.
+    let remote_path = "/tmp/codex-remote-env/test_stdio_server";
+    let container_target = format!("{container_name}:{remote_path}");
+    let copy_output = StdCommand::new("docker")
+        .arg("cp")
+        .arg(&bin)
+        .arg(&container_target)
+        .output()
+        .with_context(|| format!("copy {bin} to remote MCP test env"))?;
+    ensure!(
+        copy_output.status.success(),
+        "docker cp test_stdio_server failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&copy_output.stdout).trim(),
+        String::from_utf8_lossy(&copy_output.stderr).trim()
+    );
+
+    let chmod_output = StdCommand::new("docker")
+        .args(["exec", &container_name, "chmod", "+x", remote_path])
+        .output()
+        .context("mark remote test_stdio_server executable")?;
+    ensure!(
+        chmod_output.status.success(),
+        "docker chmod test_stdio_server failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&chmod_output.stdout).trim(),
+        String::from_utf8_lossy(&chmod_output.stderr).trim()
+    );
+
+    Ok(remote_path.to_string())
 }
 
 async fn wait_for_mcp_tool(fixture: &TestCodex, tool_name: &str) -> anyhow::Result<()> {
@@ -211,7 +255,7 @@ async fn stdio_server_round_trip() -> anyhow::Result<()> {
     .await;
 
     let expected_env_value = "propagated-env";
-    let rmcp_test_server_bin = stdio_server_bin()?;
+    let rmcp_test_server_bin = remote_aware_stdio_server_bin()?;
 
     let fixture = test_codex()
         .with_config(move |config| {
@@ -358,7 +402,7 @@ async fn stdio_mcp_tool_call_includes_sandbox_state_meta() -> anyhow::Result<()>
     )
     .await;
 
-    let rmcp_test_server_bin = stdio_server_bin()?;
+    let rmcp_test_server_bin = remote_aware_stdio_server_bin()?;
     let fixture = test_codex()
         .with_config(move |config| {
             insert_mcp_server(
@@ -473,7 +517,7 @@ async fn stdio_mcp_parallel_tool_calls_default_false_runs_serially() -> anyhow::
     )
     .await;
 
-    let rmcp_test_server_bin = stdio_server_bin()?;
+    let rmcp_test_server_bin = remote_aware_stdio_server_bin()?;
 
     let fixture = test_codex()
         .with_config(move |config| {
@@ -605,7 +649,7 @@ async fn stdio_mcp_parallel_tool_calls_opt_in_runs_concurrently() -> anyhow::Res
     )
     .await;
 
-    let rmcp_test_server_bin = stdio_server_bin()?;
+    let rmcp_test_server_bin = remote_aware_stdio_server_bin()?;
 
     let fixture = test_codex()
         .with_config(move |config| {
@@ -696,7 +740,7 @@ async fn stdio_image_responses_round_trip() -> anyhow::Result<()> {
     .await;
 
     // Build the stdio rmcp server and pass the image as data URL so it can construct ImageContent.
-    let rmcp_test_server_bin = stdio_server_bin()?;
+    let rmcp_test_server_bin = remote_aware_stdio_server_bin()?;
 
     let fixture = test_codex()
         .with_config(move |config| {
@@ -852,7 +896,7 @@ async fn stdio_image_responses_preserve_original_detail_metadata() -> anyhow::Re
     )
     .await;
 
-    let rmcp_test_server_bin = stdio_server_bin()?;
+    let rmcp_test_server_bin = remote_aware_stdio_server_bin()?;
 
     let fixture = test_codex()
         .with_model("gpt-5.3-codex")
@@ -926,7 +970,7 @@ async fn js_repl_emit_image_preserves_original_detail_for_mcp_images() -> anyhow
 
     let server = responses::start_mock_server().await;
     let call_id = "js-repl-rmcp-image";
-    let rmcp_test_server_bin = stdio_server_bin()?;
+    let rmcp_test_server_bin = remote_aware_stdio_server_bin()?;
 
     let fixture = test_codex()
         .with_model("gpt-5.3-codex")
@@ -1080,7 +1124,7 @@ async fn stdio_image_responses_are_sanitized_for_text_only_model() -> anyhow::Re
     )
     .await;
 
-    let rmcp_test_server_bin = stdio_server_bin()?;
+    let rmcp_test_server_bin = remote_aware_stdio_server_bin()?;
 
     let fixture = test_codex()
         .with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing())
@@ -1198,7 +1242,7 @@ async fn stdio_server_propagates_whitelisted_env_vars() -> anyhow::Result<()> {
 
     let expected_env_value = "propagated-env-from-whitelist";
     let _guard = EnvVarGuard::set("MCP_TEST_VALUE", OsStr::new(expected_env_value));
-    let rmcp_test_server_bin = stdio_server_bin()?;
+    let rmcp_test_server_bin = remote_aware_stdio_server_bin()?;
 
     let fixture = test_codex()
         .with_config(move |config| {

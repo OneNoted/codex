@@ -17,7 +17,6 @@ pub use codex_utils_absolute_path::test_support::PathBufExt;
 pub use codex_utils_absolute_path::test_support::PathExt;
 use regex_lite::Regex;
 use std::path::PathBuf;
-use std::process::Command;
 
 pub mod apps_test_server;
 pub mod context_snapshot;
@@ -349,51 +348,8 @@ pub fn format_with_current_shell_display_non_login(command: &str) -> String {
         .expect("serialize current shell command without login")
 }
 
-pub fn stdio_server_bin() -> anyhow::Result<String> {
-    let bin = codex_utils_cargo_bin::cargo_bin("test_stdio_server")
-        .context("locate test_stdio_server binary")?;
-    if std::env::var_os(remote_env_env_var()).is_none() {
-        return Ok(bin.to_string_lossy().to_string());
-    }
-    let remote_env = get_remote_test_env().expect("remote env var was checked above");
-
-    // Remote-aware tests run the executor inside this Docker container. The
-    // stdio server binary is built on the host, so the command path in MCP
-    // config has to be a path the remote executor can spawn inside the
-    // container.
-    let remote_path = "/tmp/codex-remote-env/test_stdio_server";
-    let container_target = format!("{}:{remote_path}", remote_env.container_name);
-    let copy_output = Command::new("docker")
-        .arg("cp")
-        .arg(&bin)
-        .arg(&container_target)
-        .output()
-        .with_context(|| format!("copy {bin:?} to remote MCP test env"))?;
-    ensure!(
-        copy_output.status.success(),
-        "docker cp test_stdio_server failed: stdout={} stderr={}",
-        String::from_utf8_lossy(&copy_output.stdout).trim(),
-        String::from_utf8_lossy(&copy_output.stderr).trim()
-    );
-
-    let chmod_output = Command::new("docker")
-        .args([
-            "exec",
-            &remote_env.container_name,
-            "chmod",
-            "+x",
-            remote_path,
-        ])
-        .output()
-        .context("mark remote test_stdio_server executable")?;
-    ensure!(
-        chmod_output.status.success(),
-        "docker chmod test_stdio_server failed: stdout={} stderr={}",
-        String::from_utf8_lossy(&chmod_output.stdout).trim(),
-        String::from_utf8_lossy(&chmod_output.stderr).trim()
-    );
-
-    Ok(remote_path.to_string())
+pub fn stdio_server_bin() -> Result<String, CargoBinError> {
+    codex_utils_cargo_bin::cargo_bin("test_stdio_server").map(|p| p.to_string_lossy().to_string())
 }
 
 pub mod fs_wait {
