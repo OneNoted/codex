@@ -101,6 +101,7 @@ impl BwrapNetworkMode {
 pub(crate) struct BwrapArgs {
     pub args: Vec<String>,
     pub preserved_files: Vec<File>,
+    pub cleanup_mount_points: Vec<PathBuf>,
 }
 
 /// Wrap a command with bubblewrap so the filesystem is read-only by default,
@@ -126,6 +127,7 @@ pub(crate) fn create_bwrap_command_args(
             Ok(BwrapArgs {
                 args: command,
                 preserved_files: Vec::new(),
+                cleanup_mount_points: Vec::new(),
             })
         } else {
             Ok(create_bwrap_flags_full_filesystem(command, options))
@@ -165,6 +167,7 @@ fn create_bwrap_flags_full_filesystem(command: Vec<String>, options: BwrapOption
     BwrapArgs {
         args,
         preserved_files: Vec::new(),
+        cleanup_mount_points: Vec::new(),
     }
 }
 
@@ -179,6 +182,7 @@ fn create_bwrap_flags(
     let BwrapArgs {
         args: filesystem_args,
         preserved_files,
+        cleanup_mount_points,
     } = create_filesystem_args(
         file_system_sandbox_policy,
         sandbox_policy_cwd,
@@ -216,6 +220,7 @@ fn create_bwrap_flags(
     Ok(BwrapArgs {
         args,
         preserved_files,
+        cleanup_mount_points,
     })
 }
 
@@ -348,6 +353,7 @@ fn create_filesystem_args(
         args
     };
     let mut preserved_files = Vec::new();
+    let mut cleanup_mount_points = Vec::new();
     let mut allowed_write_paths = Vec::with_capacity(writable_roots.len());
     for writable_root in &writable_roots {
         let root = writable_root.root.as_path();
@@ -401,10 +407,6 @@ fn create_filesystem_args(
         }
 
         let mount_root = symlink_target.as_deref().unwrap_or(root);
-        args.push("--bind".to_string());
-        args.push(path_to_string(mount_root));
-        args.push(path_to_string(mount_root));
-
         let mut read_only_subpaths: Vec<PathBuf> = writable_root
             .read_only_subpaths
             .iter()
@@ -414,9 +416,18 @@ fn create_filesystem_args(
         if let Some(target) = &symlink_target {
             read_only_subpaths = remap_paths_for_symlink_target(read_only_subpaths, root, target);
         }
+        args.push("--bind".to_string());
+        args.push(path_to_string(mount_root));
+        args.push(path_to_string(mount_root));
+
         read_only_subpaths.sort_by_key(|path| path_depth(path));
         for subpath in read_only_subpaths {
-            append_read_only_subpath_args(&mut args, &subpath, &allowed_write_paths)?;
+            append_read_only_subpath_args(
+                &mut args,
+                &mut cleanup_mount_points,
+                &subpath,
+                &allowed_write_paths,
+            )?;
         }
         let mut nested_unreadable_roots: Vec<PathBuf> = unreadable_roots
             .iter()
@@ -461,6 +472,7 @@ fn create_filesystem_args(
     Ok(BwrapArgs {
         args,
         preserved_files,
+        cleanup_mount_points,
     })
 }
 
@@ -785,8 +797,19 @@ fn append_mount_target_parent_dir_args(args: &mut Vec<String>, mount_target: &Pa
     }
 }
 
+fn track_cleanup_mount_point(cleanup_mount_points: &mut Vec<PathBuf>, mount_point: &Path) {
+    if cleanup_mount_points
+        .iter()
+        .any(|existing| existing == mount_point)
+    {
+        return;
+    }
+    cleanup_mount_points.push(mount_point.to_path_buf());
+}
+
 fn append_read_only_subpath_args(
     args: &mut Vec<String>,
+    cleanup_mount_points: &mut Vec<PathBuf>,
     subpath: &Path,
     allowed_write_paths: &[PathBuf],
 ) -> Result<()> {
@@ -811,6 +834,9 @@ fn append_read_only_subpath_args(
             args.push("--ro-bind".to_string());
             args.push("/dev/null".to_string());
             args.push(path_to_string(&first_missing_component));
+            if first_missing_component.file_name() == Some(std::ffi::OsStr::new(".git")) {
+                track_cleanup_mount_point(cleanup_mount_points, &first_missing_component);
+            }
         }
         return Ok(());
     }
@@ -1360,6 +1386,35 @@ mod tests {
     }
 
     #[test]
+    fn missing_top_level_git_tracks_cleanup_mount_point() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let workspace = temp_dir.path().join("workspace");
+        std::fs::create_dir_all(&workspace).expect("create workspace");
+
+        let policy = FileSystemSandboxPolicy::restricted(vec![FileSystemSandboxEntry {
+            path: FileSystemPath::Path {
+                path: AbsolutePathBuf::from_absolute_path(&workspace).expect("absolute workspace"),
+            },
+            access: FileSystemAccessMode::Write,
+        }]);
+
+        let args = create_filesystem_args(&policy, temp_dir.path()).expect("filesystem args");
+        let git_dest = path_to_string(&workspace.join(".git"));
+
+        assert!(
+            args.args
+                .windows(3)
+                .any(|window| { window == ["--ro-bind", "/dev/null", git_dest.as_str()] }),
+            "missing top level .git should be reserved with a /dev/null bind",
+        );
+        assert_eq!(args.cleanup_mount_points, vec![workspace.join(".git")]);
+        assert!(
+            !workspace.join(".git").exists(),
+            "cleanup tracking should not materialize host side .git at arg construction time",
+        );
+    }
+
+    #[test]
     fn ignores_missing_writable_roots() {
         let temp_dir = TempDir::new().expect("temp dir");
         let existing_root = temp_dir.path().join("existing");
@@ -1428,9 +1483,11 @@ mod tests {
                 "--bind".to_string(),
                 "/".to_string(),
                 "/".to_string(),
-                // Mask the default protected .codex subpath under that writable
-                // root. Because the root is `/` in this test, the carveout path
-                // appears as `/.codex`.
+                // Mask the default protected top level metadata paths under
+                // the writable root.
+                "--ro-bind".to_string(),
+                "/dev/null".to_string(),
+                "/.git".to_string(),
                 "--ro-bind".to_string(),
                 "/dev/null".to_string(),
                 "/.codex".to_string(),
@@ -1441,6 +1498,7 @@ mod tests {
                 "/dev".to_string(),
             ]
         );
+        assert_eq!(args.cleanup_mount_points, vec![PathBuf::from("/.git")]);
     }
 
     #[test]

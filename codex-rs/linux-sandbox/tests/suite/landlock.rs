@@ -506,6 +506,47 @@ async fn sandbox_blocks_git_and_codex_writes_inside_writable_root() {
 }
 
 #[tokio::test]
+async fn sandbox_blocks_missing_git_creation_without_host_artifact() {
+    if should_skip_bwrap_tests().await {
+        eprintln!("skipping bwrap test: bwrap sandbox prerequisites are unavailable");
+        return;
+    }
+
+    let tmpdir = tempfile::tempdir().expect("tempdir");
+    let allowed_target = tmpdir.path().join("allowed.txt");
+    let git_path = tmpdir.path().join(".git");
+
+    let output = expect_denied(
+        run_cmd_result_with_writable_roots(
+            &[
+                "bash",
+                "-lc",
+                &format!(
+                    "printf allowed > {} && git init -q",
+                    allowed_target.to_string_lossy()
+                ),
+            ],
+            &[tmpdir.path().to_path_buf()],
+            LONG_TIMEOUT_MS,
+            /*use_legacy_landlock*/ false,
+            /*network_access*/ true,
+        )
+        .await,
+        "missing .git should stay blocked under bubblewrap",
+    );
+
+    assert_ne!(output.exit_code, 0);
+    assert_eq!(
+        std::fs::read_to_string(&allowed_target).expect("read allowed write target"),
+        "allowed",
+    );
+    assert!(
+        !git_path.exists(),
+        "sandbox should not materialize host side .git when the path is missing",
+    );
+}
+
+#[tokio::test]
 async fn sandbox_blocks_codex_symlink_replacement_attack() {
     if should_skip_bwrap_tests().await {
         eprintln!("skipping bwrap test: bwrap sandbox prerequisites are unavailable");

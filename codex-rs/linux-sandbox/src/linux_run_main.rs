@@ -437,7 +437,7 @@ fn run_bwrap_with_proc_fallback(
         options,
     );
     apply_inner_command_argv0(&mut bwrap_args.args);
-    exec_bwrap(bwrap_args.args, bwrap_args.preserved_files);
+    run_bwrap_command(bwrap_args);
 }
 
 fn bwrap_network_mode(
@@ -474,6 +474,7 @@ fn build_bwrap_argv(
     crate::bwrap::BwrapArgs {
         args: argv,
         preserved_files: bwrap_args.preserved_files,
+        cleanup_mount_points: bwrap_args.cleanup_mount_points,
     }
 }
 
@@ -562,6 +563,73 @@ fn resolve_true_command() -> String {
     "true".to_string()
 }
 
+fn cleanup_bwrap_mount_points(mount_points: &[PathBuf]) {
+    for mount_point in mount_points {
+        remove_bwrap_mount_point_if_safe(mount_point);
+    }
+}
+
+fn remove_bwrap_mount_point_if_safe(mount_point: &Path) {
+    let Ok(metadata) = std::fs::symlink_metadata(mount_point) else {
+        return;
+    };
+
+    if metadata.is_file() && metadata.len() == 0 {
+        let _ = std::fs::remove_file(mount_point);
+        return;
+    }
+
+    if metadata.is_dir() {
+        let Ok(mut entries) = std::fs::read_dir(mount_point) else {
+            return;
+        };
+        if entries.next().is_none() {
+            let _ = std::fs::remove_dir(mount_point);
+        }
+    }
+}
+
+fn run_bwrap_command(bwrap_args: crate::bwrap::BwrapArgs) -> ! {
+    if bwrap_args.cleanup_mount_points.is_empty() {
+        exec_bwrap(bwrap_args.args, bwrap_args.preserved_files);
+    }
+
+    // Bubblewrap materializes missing protected mount targets such as `.git`
+    // on the host before entering the child namespace, so wait for the child
+    // and remove only the synthetic empty mount points afterward.
+    run_bwrap_in_child_then_cleanup(bwrap_args)
+}
+
+fn run_bwrap_in_child_then_cleanup(bwrap_args: crate::bwrap::BwrapArgs) -> ! {
+    let pid = unsafe { libc::fork() };
+    if pid < 0 {
+        let err = std::io::Error::last_os_error();
+        panic!("failed to fork for bubblewrap: {err}");
+    }
+
+    if pid == 0 {
+        exec_bwrap(bwrap_args.args, bwrap_args.preserved_files);
+    }
+
+    let mut status: libc::c_int = 0;
+    let wait_res = unsafe { libc::waitpid(pid, &mut status as *mut libc::c_int, 0) };
+    if wait_res < 0 {
+        let err = std::io::Error::last_os_error();
+        panic!("waitpid failed for bubblewrap child: {err}");
+    }
+
+    cleanup_bwrap_mount_points(&bwrap_args.cleanup_mount_points);
+
+    if libc::WIFEXITED(status) {
+        std::process::exit(libc::WEXITSTATUS(status));
+    }
+    if libc::WIFSIGNALED(status) {
+        std::process::exit(128 + libc::WTERMSIG(status));
+    }
+
+    std::process::exit(1);
+}
+
 /// Run a short-lived bubblewrap preflight in a child process and capture stderr.
 ///
 /// Strategy:
@@ -622,6 +690,8 @@ fn run_bwrap_in_child_capture_stderr(bwrap_args: crate::bwrap::BwrapArgs) -> Str
         let err = std::io::Error::last_os_error();
         panic!("waitpid failed for bubblewrap child: {err}");
     }
+
+    cleanup_bwrap_mount_points(&bwrap_args.cleanup_mount_points);
 
     String::from_utf8_lossy(&stderr_bytes).into_owned()
 }
