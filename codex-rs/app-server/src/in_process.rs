@@ -75,6 +75,7 @@ use codex_app_server_protocol::Result;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ServerRequest;
 use codex_arg0::Arg0DispatchPaths;
+use codex_config::ThreadConfigLoader;
 use codex_core::config::Config;
 use codex_core::config_loader::CloudRequirementsLoader;
 use codex_core::config_loader::LoaderOverrides;
@@ -115,6 +116,8 @@ pub struct InProcessStartArgs {
     pub loader_overrides: LoaderOverrides,
     /// Preloaded cloud requirements provider.
     pub cloud_requirements: CloudRequirementsLoader,
+    /// Loader used to fetch typed thread config sources before a thread starts.
+    pub thread_config_loader: Arc<dyn ThreadConfigLoader>,
     /// Feedback sink used by app-server/core telemetry and logs.
     pub feedback: CodexFeedback,
     /// Environment manager used by core execution and filesystem operations.
@@ -394,6 +397,7 @@ fn start_uninitialized(args: InProcessStartArgs) -> InProcessClientHandle {
                 cli_overrides: args.cli_overrides,
                 loader_overrides: args.loader_overrides,
                 cloud_requirements: args.cloud_requirements,
+                thread_config_loader: args.thread_config_loader,
                 feedback: args.feedback,
                 log_db: None,
                 config_warnings: args.config_warnings,
@@ -727,6 +731,7 @@ mod tests {
             cli_overrides: Vec::new(),
             loader_overrides: LoaderOverrides::default(),
             cloud_requirements: CloudRequirementsLoader::default(),
+            thread_config_loader: Arc::new(codex_config::NoopThreadConfigLoader),
             feedback: CodexFeedback::new(),
             environment_manager: Arc::new(EnvironmentManager::new(/*exec_server_url*/ None)),
             config_warnings: Vec::new(),
