@@ -26,6 +26,7 @@ pub use auth::AuthDotJson;
 pub use auth::AuthManager;
 pub use auth::AuthManagerConfig;
 pub use auth::CLIENT_ID;
+pub use auth::CODEX_AGENT_IDENTITY_ENV_VAR;
 pub use auth::CODEX_API_KEY_ENV_VAR;
 pub use auth::CodexAuth;
 pub use auth::ExternalAuth;

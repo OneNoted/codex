@@ -24,6 +24,7 @@ use super::external_bearer::BearerTokenRefresher;
 pub use crate::auth::storage::AgentIdentityAuthRecord;
 pub use crate::auth::storage::AuthDotJson;
 use crate::auth::storage::AuthStorageBackend;
+use crate::auth::storage::agent_identity_from_jwt;
 use crate::auth::storage::create_auth_storage;
 use crate::auth::util::try_parse_error_message;
 use crate::default_client::create_client;
@@ -226,6 +227,21 @@ impl CodexAuth {
             codex_home,
             /*enable_codex_api_key_env*/ false,
             auth_credentials_store_mode,
+        )
+    }
+
+    pub fn from_agent_identity_jwt(codex_home: &Path, jwt: &str) -> std::io::Result<Self> {
+        let auth_dot_json = AuthDotJson {
+            auth_mode: Some(ApiAuthMode::ChatgptAuthTokens),
+            openai_api_key: None,
+            tokens: None,
+            last_refresh: None,
+            agent_identity: Some(agent_identity_from_jwt(jwt)?),
+        };
+        Self::from_auth_dot_json(
+            codex_home,
+            auth_dot_json,
+            AuthCredentialsStoreMode::Ephemeral,
         )
     }
 
@@ -467,6 +483,7 @@ impl ChatgptAuth {
 
 pub const OPENAI_API_KEY_ENV_VAR: &str = "OPENAI_API_KEY";
 pub const CODEX_API_KEY_ENV_VAR: &str = "CODEX_API_KEY";
+pub const CODEX_AGENT_IDENTITY_ENV_VAR: &str = "CODEX_AGENT_IDENTITY";
 
 pub fn read_openai_api_key_from_env() -> Option<String> {
     env::var(OPENAI_API_KEY_ENV_VAR)
@@ -477,6 +494,13 @@ pub fn read_openai_api_key_from_env() -> Option<String> {
 
 pub fn read_codex_api_key_from_env() -> Option<String> {
     env::var(CODEX_API_KEY_ENV_VAR)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+pub fn read_codex_agent_identity_from_env() -> Option<String> {
+    env::var(CODEX_AGENT_IDENTITY_ENV_VAR)
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
@@ -598,6 +622,19 @@ pub fn enforce_login_restrictions(config: &AuthConfig) -> std::io::Result<()> {
             return Ok(());
         }
 
+        if auth.is_agent_identity_only() {
+            let agent_identity = auth.agent_identity_record().ok_or_else(|| {
+                std::io::Error::other("Agent identity auth is missing agent identity data.")
+            })?;
+            if agent_identity.workspace_id != expected_account_id {
+                return Err(std::io::Error::other(format!(
+                    "Login is restricted to workspace {expected_account_id}, but current agent identity belongs to {}.",
+                    agent_identity.workspace_id
+                )));
+            }
+            return Ok(());
+        }
+
         let token_data = match auth.get_token_data() {
             Ok(data) => data,
             Err(err) => {
@@ -672,6 +709,10 @@ fn load_auth(
     // API key via env var takes precedence over any other auth method.
     if enable_codex_api_key_env && let Some(api_key) = read_codex_api_key_from_env() {
         return Ok(Some(CodexAuth::from_api_key(api_key.as_str())));
+    }
+
+    if enable_codex_api_key_env && let Some(agent_identity) = read_codex_agent_identity_from_env() {
+        return CodexAuth::from_agent_identity_jwt(codex_home, &agent_identity).map(Some);
     }
 
     // External ChatGPT auth tokens live in the in-memory (ephemeral) store. Always check this

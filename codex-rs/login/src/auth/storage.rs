@@ -89,7 +89,7 @@ impl TryFrom<AgentIdentityAuthInput> for AgentIdentityAuthRecord {
     }
 }
 
-fn agent_identity_from_jwt(jwt: &str) -> std::io::Result<AgentIdentityAuthRecord> {
+pub(super) fn agent_identity_from_jwt(jwt: &str) -> std::io::Result<AgentIdentityAuthRecord> {
     let claims: AgentIdentityJwtClaims = decode_jwt_payload(jwt).map_err(std::io::Error::other)?;
 
     Ok(AgentIdentityAuthRecord {
