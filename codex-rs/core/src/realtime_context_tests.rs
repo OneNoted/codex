@@ -188,6 +188,28 @@ fn startup_context_blob_is_wrapped_in_tags_and_fits_budget() {
     assert!(wrapped.len().div_ceil(4) <= 200);
 }
 
+#[test]
+fn startup_context_blob_preserves_earlier_sections_when_later_section_overflows() {
+    let header = "Startup context from Codex.".to_string();
+    let recent_work = "## Recent Work\n### Git repo: /tmp/repo\nRecent sessions: 1".to_string();
+    let workspace = format!(
+        "## Machine / Workspace Map\n{}",
+        "workspace tree ".repeat(1_200)
+    );
+
+    let wrapped = format_startup_context_blob(
+        &[header, recent_work, workspace],
+        /*budget_tokens*/ 200,
+    );
+
+    assert!(wrapped.contains("## Recent Work"));
+    assert!(wrapped.contains("### Git repo: /tmp/repo"));
+    assert!(wrapped.contains("Recent sessions: 1"));
+    assert!(wrapped.contains("## Machine / Workspace Map"));
+    assert!(wrapped.contains("tokens truncated"));
+    assert!(wrapped.len().div_ceil(4) <= 200);
+}
+
 #[tokio::test]
 async fn workspace_section_requires_meaningful_structure() {
     let cwd = TempDir::new().expect("tempdir");
