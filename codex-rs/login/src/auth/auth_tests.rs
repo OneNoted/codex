@@ -230,6 +230,72 @@ fn chatgpt_auth_persists_agent_identity_for_workspace() {
 }
 
 #[test]
+fn chatgpt_auth_detects_agent_identity_only() {
+    let codex_home = tempdir().unwrap();
+    let record = AgentIdentityAuthRecord {
+        workspace_id: "account-123".to_string(),
+        chatgpt_user_id: Some("user-123".to_string()),
+        agent_runtime_id: "agent_123".to_string(),
+        agent_private_key: "pkcs8-base64".to_string(),
+        registered_at: "2026-04-13T12:00:00Z".to_string(),
+    };
+    let auth_dot_json = AuthDotJson {
+        auth_mode: Some(ApiAuthMode::ChatgptAuthTokens),
+        openai_api_key: None,
+        tokens: None,
+        last_refresh: None,
+        agent_identity: Some(record.clone()),
+    };
+    super::save_auth(
+        codex_home.path(),
+        &auth_dot_json,
+        AuthCredentialsStoreMode::File,
+    )
+    .expect("save auth file");
+    let auth = super::load_auth(
+        codex_home.path(),
+        /*enable_codex_api_key_env*/ false,
+        AuthCredentialsStoreMode::File,
+    )
+    .expect("load auth")
+    .expect("auth available");
+
+    assert!(auth.is_agent_identity_only());
+    assert_eq!(auth.agent_identity_record(), Some(record));
+}
+
+#[test]
+fn chatgpt_auth_with_tokens_is_not_agent_identity_only() {
+    let codex_home = tempdir().unwrap();
+    write_auth_file(
+        AuthFileParams {
+            openai_api_key: None,
+            chatgpt_plan_type: Some("pro".to_string()),
+            chatgpt_account_id: Some("account-123".to_string()),
+        },
+        codex_home.path(),
+    )
+    .expect("failed to write auth file");
+    let auth = super::load_auth(
+        codex_home.path(),
+        /*enable_codex_api_key_env*/ false,
+        AuthCredentialsStoreMode::File,
+    )
+    .expect("load auth")
+    .expect("auth available");
+    auth.set_agent_identity(AgentIdentityAuthRecord {
+        workspace_id: "account-123".to_string(),
+        chatgpt_user_id: Some("user-123".to_string()),
+        agent_runtime_id: "agent_123".to_string(),
+        agent_private_key: "pkcs8-base64".to_string(),
+        registered_at: "2026-04-13T12:00:00Z".to_string(),
+    })
+    .expect("set agent identity");
+
+    assert!(!auth.is_agent_identity_only());
+}
+
+#[test]
 fn unauthorized_recovery_reports_mode_and_step_names() {
     let dir = tempdir().unwrap();
     let manager = AuthManager::shared(

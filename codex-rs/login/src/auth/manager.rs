@@ -360,9 +360,18 @@ impl CodexAuth {
         self.get_current_auth_json().and_then(|t| t.tokens)
     }
 
-    pub fn get_agent_identity(&self, workspace_id: &str) -> Option<AgentIdentityAuthRecord> {
+    pub fn is_agent_identity_only(&self) -> bool {
+        self.get_current_auth_json()
+            .is_some_and(|auth| auth.tokens.is_none() && auth.agent_identity.is_some())
+    }
+
+    pub fn agent_identity_record(&self) -> Option<AgentIdentityAuthRecord> {
         self.get_current_auth_json()
             .and_then(|auth| auth.agent_identity)
+    }
+
+    pub fn get_agent_identity(&self, workspace_id: &str) -> Option<AgentIdentityAuthRecord> {
+        self.agent_identity_record()
             .filter(|identity| identity.workspace_id == workspace_id)
     }
 

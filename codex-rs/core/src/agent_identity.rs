@@ -116,14 +116,42 @@ impl AgentIdentityManager {
 
     pub(crate) fn is_enabled(&self) -> bool {
         self.feature_enabled
+            || self
+                .auth_manager
+                .auth_cached()
+                .as_ref()
+                .is_some_and(CodexAuth::is_agent_identity_only)
     }
 
     pub(crate) async fn ensure_registered_identity(&self) -> Result<Option<StoredAgentIdentity>> {
+        let Some(auth) = self.auth_manager.auth().await else {
+            debug!("skipping agent identity registration because no auth is available");
+            return Ok(None);
+        };
+
+        if auth.is_agent_identity_only() {
+            let _guard = self.ensure_lock.lock().await;
+            let Some(record) = auth.agent_identity_record() else {
+                return Ok(None);
+            };
+            let stored_identity =
+                StoredAgentIdentity::from_agent_only_auth_record(record, self.abom.clone())?;
+            info!(
+                agent_runtime_id = %stored_identity.agent_runtime_id,
+                binding_id = %stored_identity.binding_id,
+                "using agent identity from auth"
+            );
+            return Ok(Some(stored_identity));
+        }
+
         if !self.feature_enabled {
             return Ok(None);
         }
 
-        let Some((auth, binding)) = self.current_auth_binding().await else {
+        let Some(binding) =
+            AgentIdentityBinding::from_auth(&auth, self.auth_manager.forced_chatgpt_workspace_id())
+        else {
+            debug!("skipping agent identity registration because ChatGPT auth is unavailable");
             return Ok(None);
         };
 
@@ -345,6 +373,23 @@ impl AgentIdentityManager {
 }
 
 impl StoredAgentIdentity {
+    fn from_agent_only_auth_record(
+        record: AgentIdentityAuthRecord,
+        abom: AgentBillOfMaterials,
+    ) -> Result<Self> {
+        let signing_key = signing_key_from_private_key_pkcs8_base64(&record.agent_private_key)?;
+        Ok(Self {
+            binding_id: format!("chatgpt-account-{}", record.workspace_id),
+            chatgpt_account_id: record.workspace_id,
+            chatgpt_user_id: record.chatgpt_user_id,
+            agent_runtime_id: record.agent_runtime_id,
+            private_key_pkcs8_base64: record.agent_private_key,
+            public_key_ssh: encode_ssh_ed25519_public_key(&signing_key.verifying_key()),
+            registered_at: record.registered_at,
+            abom,
+        })
+    }
+
     fn from_auth_record(
         binding: &AgentIdentityBinding,
         record: AgentIdentityAuthRecord,
@@ -548,6 +593,77 @@ mod tests {
         );
 
         assert_eq!(manager.ensure_registered_identity().await.unwrap(), None);
+    }
+
+    #[test]
+    fn is_enabled_uses_agent_identity_only_auth_when_feature_disabled() {
+        let (auth, _record) =
+            make_agent_identity_only_auth("account-123", Some("user-123"), "agent_123");
+        let auth_manager = AuthManager::from_auth_for_testing(auth);
+        let manager = AgentIdentityManager::new_for_tests(
+            auth_manager,
+            /*feature_enabled*/ false,
+            "https://chatgpt.com/backend-api/".to_string(),
+            SessionSource::Cli,
+        );
+
+        assert!(manager.is_enabled());
+    }
+
+    #[test]
+    fn is_enabled_stays_false_for_user_token_with_cached_agent_identity() {
+        let auth = make_chatgpt_auth("account-123", Some("user-123"));
+        auth.set_agent_identity(make_agent_identity_record(
+            "account-123",
+            Some("user-123"),
+            "agent_123",
+        ))
+        .expect("seed stored identity");
+        let auth_manager = AuthManager::from_auth_for_testing(auth);
+        let manager = AgentIdentityManager::new_for_tests(
+            auth_manager,
+            /*feature_enabled*/ false,
+            "https://chatgpt.com/backend-api/".to_string(),
+            SessionSource::Cli,
+        );
+
+        assert!(!manager.is_enabled());
+    }
+
+    #[tokio::test]
+    async fn ensure_registered_identity_uses_agent_identity_only_auth_when_feature_is_disabled() {
+        let (auth, record) =
+            make_agent_identity_only_auth("account-123", Some("user-123"), "agent_123");
+        let auth_manager = AuthManager::from_auth_for_testing(auth);
+        let manager = AgentIdentityManager::new_for_tests(
+            auth_manager,
+            /*feature_enabled*/ false,
+            "https://chatgpt.com/backend-api/".to_string(),
+            SessionSource::Cli,
+        );
+
+        let stored = manager
+            .ensure_registered_identity()
+            .await
+            .unwrap()
+            .expect("stored identity should load");
+        let signing_key =
+            signing_key_from_private_key_pkcs8_base64(&record.agent_private_key).unwrap();
+        let expected = StoredAgentIdentity {
+            binding_id: "chatgpt-account-account-123".to_string(),
+            chatgpt_account_id: record.workspace_id,
+            chatgpt_user_id: record.chatgpt_user_id,
+            agent_runtime_id: record.agent_runtime_id,
+            private_key_pkcs8_base64: record.agent_private_key,
+            public_key_ssh: encode_ssh_ed25519_public_key(&signing_key.verifying_key()),
+            registered_at: record.registered_at,
+            abom: build_abom(SessionSource::Cli),
+        };
+
+        assert_eq!(stored, expected);
+        stored
+            .validate_key_material()
+            .expect("key material should be valid");
     }
 
     #[tokio::test]
@@ -794,6 +910,42 @@ mod tests {
         CodexAuth::from_auth_storage(tempdir.path(), AuthCredentialsStoreMode::File)
             .expect("load auth")
             .expect("auth")
+    }
+
+    fn make_agent_identity_only_auth(
+        account_id: &str,
+        user_id: Option<&str>,
+        agent_runtime_id: &str,
+    ) -> (CodexAuth, AgentIdentityAuthRecord) {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let record = make_agent_identity_record(account_id, user_id, agent_runtime_id);
+        let auth_json = AuthDotJson {
+            auth_mode: Some(ApiAuthMode::ChatgptAuthTokens),
+            openai_api_key: None,
+            tokens: None,
+            last_refresh: Some(Utc::now()),
+            agent_identity: Some(record.clone()),
+        };
+        save_auth(tempdir.path(), &auth_json, AuthCredentialsStoreMode::File).expect("save auth");
+        let auth = CodexAuth::from_auth_storage(tempdir.path(), AuthCredentialsStoreMode::File)
+            .expect("load auth")
+            .expect("auth");
+        (auth, record)
+    }
+
+    fn make_agent_identity_record(
+        account_id: &str,
+        user_id: Option<&str>,
+        agent_runtime_id: &str,
+    ) -> AgentIdentityAuthRecord {
+        let key_material = generate_agent_key_material().expect("key material");
+        AgentIdentityAuthRecord {
+            workspace_id: account_id.to_string(),
+            chatgpt_user_id: user_id.map(ToOwned::to_owned),
+            agent_runtime_id: agent_runtime_id.to_string(),
+            agent_private_key: key_material.private_key_pkcs8_base64,
+            registered_at: "2026-01-01T00:00:00Z".to_string(),
+        }
     }
 
     fn fake_id_token(account_id: &str, user_id: Option<&str>) -> String {
