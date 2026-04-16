@@ -1,4 +1,5 @@
 use chrono::DateTime;
+use chrono::SecondsFormat;
 use chrono::Utc;
 use serde::Deserialize;
 use serde::Serialize;
@@ -19,6 +20,7 @@ use std::sync::Mutex;
 use tracing::warn;
 
 use crate::token_data::TokenData;
+use crate::token_data::decode_jwt_payload;
 use codex_app_server_protocol::AuthMode;
 use codex_config::types::AuthCredentialsStoreMode;
 use codex_keyring_store::DefaultKeyringStore;
@@ -40,7 +42,11 @@ pub struct AuthDotJson {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_refresh: Option<DateTime<Utc>>,
 
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_agent_identity"
+    )]
     pub agent_identity: Option<AgentIdentityAuthRecord>,
 }
 
@@ -52,6 +58,62 @@ pub struct AgentIdentityAuthRecord {
     pub agent_runtime_id: String,
     pub agent_private_key: String,
     pub registered_at: String,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum AgentIdentityAuthInput {
+    Record(AgentIdentityAuthRecord),
+    Jwt(String),
+}
+
+#[derive(Deserialize)]
+struct AgentIdentityJwtClaims {
+    workspace_id: String,
+    #[serde(default)]
+    chatgpt_user_id: Option<String>,
+    agent_runtime_id: String,
+    agent_private_key: String,
+    #[serde(default)]
+    registered_at: Option<String>,
+}
+
+impl TryFrom<AgentIdentityAuthInput> for AgentIdentityAuthRecord {
+    type Error = std::io::Error;
+
+    fn try_from(input: AgentIdentityAuthInput) -> std::io::Result<Self> {
+        match input {
+            AgentIdentityAuthInput::Record(record) => Ok(record),
+            AgentIdentityAuthInput::Jwt(jwt) => agent_identity_from_jwt(&jwt),
+        }
+    }
+}
+
+fn agent_identity_from_jwt(jwt: &str) -> std::io::Result<AgentIdentityAuthRecord> {
+    let claims: AgentIdentityJwtClaims = decode_jwt_payload(jwt).map_err(std::io::Error::other)?;
+
+    Ok(AgentIdentityAuthRecord {
+        workspace_id: claims.workspace_id,
+        chatgpt_user_id: claims.chatgpt_user_id,
+        agent_runtime_id: claims.agent_runtime_id,
+        agent_private_key: claims.agent_private_key,
+        registered_at: claims
+            .registered_at
+            .unwrap_or_else(|| Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)),
+    })
+}
+
+fn deserialize_agent_identity<'de, D>(
+    deserializer: D,
+) -> Result<Option<AgentIdentityAuthRecord>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let input = Option::<AgentIdentityAuthInput>::deserialize(deserializer)?;
+    input
+        .map(AgentIdentityAuthRecord::try_from)
+        .transpose()
+        .map_err(serde::de::Error::custom)
 }
 
 pub(super) fn get_auth_file(codex_home: &Path) -> PathBuf {
