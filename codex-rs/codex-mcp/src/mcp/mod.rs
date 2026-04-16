@@ -301,7 +301,9 @@ pub fn with_codex_apps_mcp(
     auth: Option<&CodexAuth>,
     config: &McpConfig,
 ) -> HashMap<String, McpServerConfig> {
-    with_codex_apps_mcp_with_authorization_header(servers, auth, config, None)
+    with_codex_apps_mcp_with_authorization_header(
+        servers, auth, config, /*authorization_header_value*/ None,
+    )
 }
 
 pub fn with_codex_apps_mcp_with_authorization_header(
@@ -329,7 +331,9 @@ pub fn effective_mcp_servers(
     config: &McpConfig,
     auth: Option<&CodexAuth>,
 ) -> HashMap<String, McpServerConfig> {
-    effective_mcp_servers_with_authorization_header(config, auth, None)
+    effective_mcp_servers_with_authorization_header(
+        config, auth, /*authorization_header_value*/ None,
+    )
 }
 
 pub fn effective_mcp_servers_with_authorization_header(
@@ -359,8 +363,10 @@ pub async fn collect_mcp_snapshot_with_detail(
     submit_id: String,
     detail: McpSnapshotDetail,
 ) -> McpListToolsResponseEvent {
-    collect_mcp_snapshot_with_detail_and_authorization_header(config, auth, submit_id, detail, None)
-        .await
+    collect_mcp_snapshot_with_detail_and_authorization_header(
+        config, auth, submit_id, detail, /*authorization_header_value*/ None,
+    )
+    .await
 }
 
 pub async fn collect_mcp_snapshot_with_detail_and_authorization_header(
@@ -446,7 +452,7 @@ pub async fn collect_mcp_server_status_snapshot_with_detail(
     detail: McpSnapshotDetail,
 ) -> McpServerStatusSnapshot {
     collect_mcp_server_status_snapshot_with_detail_and_authorization_header(
-        config, auth, submit_id, detail, None,
+        config, auth, submit_id, detail, /*authorization_header_value*/ None,
     )
     .await
 }

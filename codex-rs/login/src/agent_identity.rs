@@ -132,6 +132,18 @@ impl BackgroundAgentTaskManager {
     }
 
     pub async fn authorization_header_value(&self) -> Result<Option<String>> {
+        let Some(auth) = self.auth_manager.auth().await else {
+            debug!("skipping background agent task auth because no auth is available");
+            return Ok(None);
+        };
+
+        self.authorization_header_value_for_auth(&auth).await
+    }
+
+    pub async fn authorization_header_value_for_auth(
+        &self,
+        auth: &CodexAuth,
+    ) -> Result<Option<String>> {
         if !supports_background_agent_task_auth(&self.chatgpt_base_url) {
             debug!(
                 chatgpt_base_url = %self.chatgpt_base_url,
@@ -140,13 +152,16 @@ impl BackgroundAgentTaskManager {
             return Ok(None);
         }
 
-        let Some((auth, binding)) = self.current_auth_binding().await else {
+        let Some(binding) =
+            AgentIdentityBinding::from_auth(auth, self.auth_manager.forced_chatgpt_workspace_id())
+        else {
+            debug!("skipping background agent task auth because ChatGPT auth is unavailable");
             return Ok(None);
         };
 
         let _guard = self.ensure_lock.lock().await;
         let mut stored_identity = self
-            .ensure_registered_identity_for_binding(&auth, &binding)
+            .ensure_registered_identity_for_binding(auth, &binding)
             .await?;
         let background_task = match stored_identity.background_task.clone() {
             Some(background_task)
@@ -159,7 +174,7 @@ impl BackgroundAgentTaskManager {
                     .register_background_task_for_identity(&binding, &stored_identity)
                     .await?;
                 stored_identity.background_task = Some(background_task.clone());
-                self.store_identity(&auth, &stored_identity)?;
+                self.store_identity(auth, &stored_identity)?;
                 background_task
             }
         };
@@ -171,7 +186,7 @@ impl BackgroundAgentTaskManager {
     }
 
     pub async fn authorization_header_value_or_bearer(&self, auth: &CodexAuth) -> Option<String> {
-        match self.authorization_header_value().await {
+        match self.authorization_header_value_for_auth(auth).await {
             Ok(Some(authorization_header_value)) => Some(authorization_header_value),
             Ok(None) => auth
                 .get_token()
@@ -189,20 +204,6 @@ impl BackgroundAgentTaskManager {
                     .map(|token| format!("Bearer {token}"))
             }
         }
-    }
-
-    async fn current_auth_binding(&self) -> Option<(CodexAuth, AgentIdentityBinding)> {
-        let Some(auth) = self.auth_manager.auth().await else {
-            debug!("skipping background agent task auth because no auth is available");
-            return None;
-        };
-
-        let binding =
-            AgentIdentityBinding::from_auth(&auth, self.auth_manager.forced_chatgpt_workspace_id());
-        if binding.is_none() {
-            debug!("skipping background agent task auth because ChatGPT auth is unavailable");
-        }
-        binding.map(|binding| (auth, binding))
     }
 
     async fn ensure_registered_identity_for_binding(

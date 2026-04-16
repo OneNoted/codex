@@ -30,8 +30,10 @@ impl McpManager {
         config: &Config,
         auth: Option<&CodexAuth>,
     ) -> HashMap<String, McpServerConfig> {
-        self.effective_servers_with_authorization_header(config, auth, None)
-            .await
+        self.effective_servers_with_authorization_header(
+            config, auth, /*authorization_header_value*/ None,
+        )
+        .await
     }
 
     pub async fn effective_servers_with_authorization_header(
