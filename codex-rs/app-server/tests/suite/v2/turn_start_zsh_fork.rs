@@ -40,9 +40,13 @@ use std::path::Path;
 use tempfile::TempDir;
 use tokio::time::timeout;
 
-#[cfg(windows)]
-const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
-#[cfg(not(windows))]
+// The zsh-fork suite can take longer to surface follow-up approvals and
+// completion notifications on the slower macOS x86 Bazel runners than it does
+// on local or Linux builds. Give those runners extra headroom without slowing
+// the rest of the suite.
+#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+#[cfg(not(all(target_os = "macos", target_arch = "x86_64")))]
 const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 #[tokio::test]
