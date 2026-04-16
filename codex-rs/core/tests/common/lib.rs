@@ -357,6 +357,10 @@ pub fn stdio_server_bin() -> anyhow::Result<String> {
     }
     let remote_env = get_remote_test_env().expect("remote env var was checked above");
 
+    // Remote-aware tests run the executor inside this Docker container. The
+    // stdio server binary is built on the host, so the command path in MCP
+    // config has to be a path the remote executor can spawn inside the
+    // container.
     let remote_path = "/tmp/codex-remote-env/test_stdio_server";
     let container_target = format!("{}:{remote_path}", remote_env.container_name);
     let copy_output = Command::new("docker")

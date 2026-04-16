@@ -92,6 +92,9 @@ enum McpCallEvent {
 const REMOTE_MCP_ENVIRONMENT: &str = "remote";
 
 fn remote_aware_experimental_environment() -> Option<String> {
+    // These tests run locally in normal CI and against the Docker-backed
+    // executor in full-ci. Match that shared test environment instead of
+    // parameterizing each stdio MCP test with its own local/remote cases.
     std::env::var_os(remote_env_env_var()).map(|_| REMOTE_MCP_ENVIRONMENT.to_string())
 }
 
