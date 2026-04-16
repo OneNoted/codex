@@ -1496,9 +1496,17 @@ mod tests {
                 "--bind".to_string(),
                 "/dev".to_string(),
                 "/dev".to_string(),
+                // The writable /dev carveout also needs its own protected
+                // top level metadata reservation when .git is absent.
+                "--ro-bind".to_string(),
+                "/dev/null".to_string(),
+                "/dev/.git".to_string(),
             ]
         );
-        assert_eq!(args.cleanup_mount_points, vec![PathBuf::from("/.git")]);
+        assert_eq!(
+            args.cleanup_mount_points,
+            vec![PathBuf::from("/.git"), PathBuf::from("/dev/.git")]
+        );
     }
 
     #[test]
