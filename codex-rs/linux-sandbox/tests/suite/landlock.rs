@@ -522,7 +522,8 @@ async fn sandbox_blocks_missing_git_creation_without_host_artifact() {
                 "bash",
                 "-lc",
                 &format!(
-                    "printf allowed > {} && git init -q",
+                    "cd {} && printf allowed > {} && git init -q",
+                    tmpdir.path().to_string_lossy(),
                     allowed_target.to_string_lossy()
                 ),
             ],
