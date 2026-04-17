@@ -161,23 +161,13 @@ impl Transport<RoleClient> for ExecutorProcessTransport {
     }
 }
 
-// Remote private implementation.
-
-enum BufferedStdoutMessage {
-    Message(Box<RxJsonRpcMessage<RoleClient>>),
-    MalformedLine,
-    Pending,
-}
-
 impl ExecutorProcessTransport {
     async fn receive_message(&mut self) -> Option<RxJsonRpcMessage<RoleClient>> {
         loop {
             // rmcp stdio framing is line-oriented JSON. We first drain any
             // complete line already buffered from an earlier process event.
-            match self.take_stdout_message(/*allow_partial*/ self.closed) {
-                BufferedStdoutMessage::Message(message) => return Some(*message),
-                BufferedStdoutMessage::MalformedLine => continue,
-                BufferedStdoutMessage::Pending => {}
+            if let Some(message) = self.take_stdout_message(/*allow_partial*/ self.closed) {
+                return Some(message);
             }
             if self.closed {
                 self.flush_stderr();
@@ -277,30 +267,31 @@ impl ExecutorProcessTransport {
         }
     }
 
-    fn take_stdout_message(&mut self, allow_partial: bool) -> BufferedStdoutMessage {
+    fn take_stdout_message(&mut self, allow_partial: bool) -> Option<RxJsonRpcMessage<RoleClient>> {
         // A normal MCP stdio server emits one JSON-RPC message per newline.
         // If the process has already closed, accept a final unterminated line
         // so EOF after a complete JSON object behaves like local rmcp's
         // `decode_eof` handling.
-        let line_end = self.stdout.iter().position(|byte| *byte == b'\n');
-        let line = match (line_end, allow_partial && !self.stdout.is_empty()) {
-            (Some(index), _) => {
-                let mut line = self.stdout.drain(..=index).collect::<Vec<_>>();
-                line.pop();
-                line
-            }
-            (None, true) => self.stdout.drain(..).collect(),
-            (None, false) => return BufferedStdoutMessage::Pending,
-        };
-        let line = Self::trim_trailing_carriage_return(line);
-        match from_slice::<RxJsonRpcMessage<RoleClient>>(&line) {
-            Ok(message) => BufferedStdoutMessage::Message(Box::new(message)),
-            Err(error) => {
-                debug!(
-                    "Failed to parse remote MCP server message ({}): {error}",
-                    self.program_name
-                );
-                BufferedStdoutMessage::MalformedLine
+        loop {
+            let line_end = self.stdout.iter().position(|byte| *byte == b'\n');
+            let line = match (line_end, allow_partial && !self.stdout.is_empty()) {
+                (Some(index), _) => {
+                    let mut line = self.stdout.drain(..=index).collect::<Vec<_>>();
+                    line.pop();
+                    line
+                }
+                (None, true) => self.stdout.drain(..).collect(),
+                (None, false) => return None,
+            };
+            let line = Self::trim_trailing_carriage_return(line);
+            match from_slice::<RxJsonRpcMessage<RoleClient>>(&line) {
+                Ok(message) => return Some(message),
+                Err(error) => {
+                    debug!(
+                        "Failed to parse remote MCP server message ({}): {error}",
+                        self.program_name
+                    );
+                }
             }
         }
     }
