@@ -1431,7 +1431,7 @@ function normalizeEmitImageValue(value) {
   }
 
   if (value.type === "mcp_tool_call_output") {
-    return requireSingleImage(parseMcpToolResult(value.output));
+    return requireSingleImage(parseMcpToolResult(value.result));
   }
 
   if ("output" in value) {

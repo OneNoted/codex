@@ -1009,12 +1009,8 @@ async fn js_repl_emit_image_preserves_original_detail_for_mcp_images() -> anyhow
 const out = await codex.tool("mcp__rmcp__image_scenario", {
   scenario: "image_only_original_detail",
 });
-if (out.type === "mcp_tool_call_output") {
-  await codex.emitImage(out);
-} else {
-  const imageItem = out.output.find((item) => item.type === "input_image");
-  await codex.emitImage(imageItem);
-}
+const imageItem = out.output.find((item) => item.type === "input_image");
+await codex.emitImage(imageItem);
 "#,
             ),
             responses::ev_completed("resp-1"),
