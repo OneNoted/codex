@@ -980,7 +980,7 @@ async fn js_repl_emit_image_preserves_original_detail_for_mcp_images() -> anyhow
 
     let server = responses::start_mock_server().await;
     let call_id = "js-repl-rmcp-image";
-    let rmcp_test_server_bin = remote_aware_stdio_server_bin()?;
+    let rmcp_test_server_bin = stdio_server_bin()?;
 
     let fixture = test_codex()
         .with_model("gpt-5.3-codex")
@@ -993,13 +993,10 @@ async fn js_repl_emit_image_preserves_original_detail_for_mcp_images() -> anyhow
                 config,
                 "rmcp",
                 stdio_transport(rmcp_test_server_bin, /*env*/ None, Vec::new()),
-                TestMcpServerOptions {
-                    experimental_environment: remote_aware_experimental_environment(),
-                    ..Default::default()
-                },
+                TestMcpServerOptions::default(),
             );
         })
-        .build_remote_aware(&server)
+        .build(&server)
         .await?;
 
     wait_for_mcp_tool(&fixture, "mcp__rmcp__image_scenario").await?;
