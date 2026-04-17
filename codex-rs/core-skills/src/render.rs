@@ -10,8 +10,8 @@ use codex_utils_output_truncation::approx_token_count;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 
-pub const DEFAULT_SKILL_METADATA_CHAR_BUDGET: usize = 8_000;
-pub const SKILL_METADATA_CONTEXT_WINDOW_PERCENT: usize = 2;
+const DEFAULT_SKILL_METADATA_CHAR_BUDGET: usize = 8_000;
+const SKILL_METADATA_CONTEXT_WINDOW_PERCENT: usize = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SkillMetadataBudget {

@@ -113,6 +113,7 @@ use core_test_support::responses::mount_sse_once;
 use core_test_support::responses::sse;
 use core_test_support::responses::start_mock_server;
 use core_test_support::test_codex::test_codex;
+use core_test_support::test_path_buf;
 use core_test_support::tracing::install_test_tracing;
 use core_test_support::wait_for_event;
 use opentelemetry::trace::TraceContextExt;
@@ -4655,7 +4656,7 @@ async fn build_initial_context_trims_skill_metadata_from_context_window_budget()
             interface: None,
             dependencies: None,
             policy: None,
-            path_to_skills_md: PathBuf::from("/tmp/admin-skill/SKILL.md").abs(),
+            path_to_skills_md: test_path_buf("/tmp/admin-skill/SKILL.md").abs(),
             scope: SkillScope::Admin,
         },
         SkillMetadata {
@@ -4665,7 +4666,7 @@ async fn build_initial_context_trims_skill_metadata_from_context_window_budget()
             interface: None,
             dependencies: None,
             policy: None,
-            path_to_skills_md: PathBuf::from("/tmp/repo-skill/SKILL.md").abs(),
+            path_to_skills_md: test_path_buf("/tmp/repo-skill/SKILL.md").abs(),
             scope: SkillScope::Repo,
         },
     ];
@@ -4702,7 +4703,7 @@ fn emit_thread_start_skill_metrics_records_enabled_kept_and_truncated_values() {
             interface: None,
             dependencies: None,
             policy: None,
-            path_to_skills_md: PathBuf::from("/tmp/repo-skill/SKILL.md").abs(),
+            path_to_skills_md: test_path_buf("/tmp/repo-skill/SKILL.md").abs(),
             scope: SkillScope::Repo,
         }],
         SkillMetadataBudget::Characters(1),
@@ -4738,7 +4739,7 @@ async fn build_initial_context_emits_thread_start_skill_warning_once() {
             interface: None,
             dependencies: None,
             policy: None,
-            path_to_skills_md: PathBuf::from("/tmp/admin-skill/SKILL.md").abs(),
+            path_to_skills_md: test_path_buf("/tmp/admin-skill/SKILL.md").abs(),
             scope: SkillScope::Admin,
         },
         SkillMetadata {
@@ -4748,7 +4749,7 @@ async fn build_initial_context_emits_thread_start_skill_warning_once() {
             interface: None,
             dependencies: None,
             policy: None,
-            path_to_skills_md: PathBuf::from("/tmp/repo-skill/SKILL.md").abs(),
+            path_to_skills_md: test_path_buf("/tmp/repo-skill/SKILL.md").abs(),
             scope: SkillScope::Repo,
         },
     ];
