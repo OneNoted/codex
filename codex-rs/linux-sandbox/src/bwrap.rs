@@ -394,6 +394,9 @@ fn create_filesystem_args(
 
     for writable_root in &sorted_writable_roots {
         let root = writable_root.root.as_path();
+        if !root.exists() {
+            continue;
+        }
         let symlink_target = canonical_target_if_symlinked_path(root);
         // If a denied ancestor was already masked, recreate any missing mount
         // target parents before binding the narrower writable descendant.
@@ -1448,7 +1451,10 @@ mod tests {
             "existing writable root should be rebound writable",
         );
         assert!(
-            !args.args.iter().any(|arg| arg == &missing_root),
+            !args
+                .args
+                .iter()
+                .any(|arg| arg == &missing_root || arg.starts_with(&(missing_root.clone() + "/"))),
             "missing writable root should be skipped",
         );
     }
