@@ -96,12 +96,15 @@ use url::Url;
 
 mod hook_cell;
 mod reasoning_cell;
+mod thinking_cell;
 
 pub(crate) use hook_cell::HookCell;
 pub(crate) use hook_cell::new_active_hook_cell;
 pub(crate) use hook_cell::new_completed_hook_cell;
 pub(crate) use reasoning_cell::ReasoningBlockCell;
 pub(crate) use reasoning_cell::new_active_reasoning_block;
+pub(crate) use thinking_cell::ThinkingBlockCell;
+pub(crate) use thinking_cell::new_active_thinking_block;
 
 /// Represents an event to display in the conversation history. Returns its
 /// `Vec<Line<'static>>` representation to make it easier to display in a

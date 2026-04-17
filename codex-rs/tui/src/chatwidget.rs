@@ -181,6 +181,8 @@ use codex_protocol::protocol::GuardianAssessmentEvent;
 use codex_protocol::protocol::GuardianAssessmentStatus;
 use codex_protocol::protocol::ImageGenerationBeginEvent;
 use codex_protocol::protocol::ImageGenerationEndEvent;
+#[cfg(test)]
+use codex_protocol::protocol::ItemStartedEvent;
 use codex_protocol::protocol::ListSkillsResponseEvent;
 #[cfg(test)]
 use codex_protocol::protocol::McpListToolsResponseEvent;
@@ -859,6 +861,8 @@ pub(crate) struct ChatWidget {
     reasoning_buffer: String,
     // Accumulates full reasoning content for transcript-only recording
     full_reasoning_buffer: String,
+    // The active streamed agent-message phase when the provider exposes it on item starts.
+    active_agent_message_phase: Option<MessagePhase>,
     // The currently rendered footer state. We keep the already-formatted
     // details here so transient stream interruptions can restore the footer
     // exactly as it was shown.
@@ -2219,7 +2223,61 @@ impl ChatWidget {
         self.finalize_completed_assistant_message(Some(&message));
     }
 
+    fn on_agent_message_item_started(&mut self, phase: Option<MessagePhase>) {
+        self.active_agent_message_phase = phase;
+    }
+
+    fn ensure_active_thinking_cell(&mut self) -> Option<&mut history_cell::ThinkingBlockCell> {
+        if !self.inline_reasoning_blocks_enabled() {
+            return None;
+        }
+
+        let has_thinking_cell = self
+            .active_cell
+            .as_ref()
+            .is_some_and(|cell| cell.as_any().is::<history_cell::ThinkingBlockCell>());
+        if !has_thinking_cell {
+            self.flush_active_cell();
+            self.active_cell = Some(Box::new(history_cell::new_active_thinking_block(
+                &self.config.cwd,
+            )));
+            self.bump_active_cell_revision();
+        }
+
+        self.active_cell.as_mut().and_then(|cell| {
+            cell.as_any_mut()
+                .downcast_mut::<history_cell::ThinkingBlockCell>()
+        })
+    }
+
+    fn seed_thinking_from_completed_message(&mut self, message: &str) {
+        if message.trim().is_empty() || self.stream_controller.is_some() {
+            return;
+        }
+
+        if let Some(cell) = self.ensure_active_thinking_cell()
+            && cell.is_empty()
+        {
+            cell.push_delta(message);
+            self.bump_active_cell_revision();
+        }
+    }
+
     fn on_agent_message_delta(&mut self, delta: String) {
+        if self.inline_reasoning_blocks_enabled()
+            && matches!(
+                self.active_agent_message_phase,
+                Some(MessagePhase::Commentary)
+            )
+        {
+            if let Some(cell) = self.ensure_active_thinking_cell() {
+                cell.push_delta(&delta);
+                self.bump_active_cell_revision();
+                self.request_redraw();
+            }
+            return;
+        }
+
         self.handle_streaming_delta(delta);
     }
 
@@ -2428,6 +2486,7 @@ impl ChatWidget {
             .set_interrupt_hint_visible(/*visible*/ true);
         self.terminal_title_status_kind = TerminalTitleStatusKind::Working;
         self.set_status_header(String::from("Working"));
+        self.active_agent_message_phase = None;
         self.full_reasoning_buffer.clear();
         self.reasoning_buffer.clear();
         self.request_redraw();
@@ -2469,6 +2528,13 @@ impl ChatWidget {
             self.add_boxed_history(cell);
         }
         self.flush_unified_exec_wait_streak();
+        if self
+            .active_cell
+            .as_ref()
+            .is_some_and(|cell| cell.as_any().is::<history_cell::ThinkingBlockCell>())
+        {
+            self.flush_active_cell();
+        }
         if !from_replay {
             self.collect_runtime_metrics_delta();
             let runtime_metrics =
@@ -2495,6 +2561,7 @@ impl ChatWidget {
         }
         // Mark task stopped and request redraw now that all content is in history.
         self.pending_status_indicator_restore = false;
+        self.active_agent_message_phase = None;
         self.agent_turn_running = false;
         self.turn_sleep_inhibitor
             .set_turn_running(/*turn_running*/ false);
@@ -2886,6 +2953,7 @@ impl ChatWidget {
         self.stream_controller = None;
         self.plan_stream_controller = None;
         self.pending_status_indicator_restore = false;
+        self.active_agent_message_phase = None;
         self.request_status_line_branch_refresh();
         self.maybe_show_pending_rate_limit_prompt();
     }
@@ -4333,13 +4401,33 @@ impl ChatWidget {
                 AgentMessageContent::Text { text } => message.push_str(text),
             }
         }
-        self.finalize_completed_assistant_message(
-            (!message.is_empty()).then_some(message.as_str()),
-        );
-        if matches!(item.phase, Some(MessagePhase::FinalAnswer) | None) && !message.is_empty() {
+        let phase = item
+            .phase
+            .clone()
+            .or(self.active_agent_message_phase.clone());
+
+        match phase {
+            Some(MessagePhase::Commentary) if self.inline_reasoning_blocks_enabled() => {
+                self.seed_thinking_from_completed_message(&message);
+                if self
+                    .active_cell
+                    .as_ref()
+                    .is_some_and(|cell| cell.as_any().is::<history_cell::ThinkingBlockCell>())
+                {
+                    self.flush_active_cell();
+                    self.request_redraw();
+                }
+            }
+            _ => self.finalize_completed_assistant_message(
+                (!message.is_empty()).then_some(message.as_str()),
+            ),
+        }
+
+        if matches!(phase, Some(MessagePhase::FinalAnswer) | None) && !message.is_empty() {
             self.record_agent_markdown(&message);
         }
-        self.pending_status_indicator_restore = match item.phase {
+        self.active_agent_message_phase = None;
+        self.pending_status_indicator_restore = match phase {
             // Models that don't support preambles only output AgentMessageItems on turn completion.
             Some(MessagePhase::FinalAnswer) | None => false,
             Some(MessagePhase::Commentary) => true,
@@ -4960,6 +5048,7 @@ impl ChatWidget {
             interrupts: InterruptManager::new(),
             reasoning_buffer: String::new(),
             full_reasoning_buffer: String::new(),
+            active_agent_message_phase: None,
             current_status: StatusIndicatorState::working(),
             pending_guardian_review_status: PendingGuardianReviewStatus::default(),
             active_hook_cell: None,
@@ -6472,6 +6561,9 @@ impl ChatWidget {
         from_replay: bool,
     ) {
         match notification.item {
+            ThreadItem::AgentMessage { phase, .. } => {
+                self.on_agent_message_item_started(phase);
+            }
             ThreadItem::CommandExecution {
                 id,
                 command,
@@ -6923,7 +7015,6 @@ impl ChatWidget {
                 }
             }
             EventMsg::RawResponseItem(_)
-            | EventMsg::ItemStarted(_)
             | EventMsg::AgentMessageContentDelta(_)
             | EventMsg::PatchApplyUpdated(_)
             | EventMsg::ReasoningContentDelta(_)
@@ -6931,6 +7022,11 @@ impl ChatWidget {
             | EventMsg::DynamicToolCallRequest(_)
             | EventMsg::DynamicToolCallResponse(_)
             | EventMsg::RealtimeConversationListVoicesResponse(_) => {}
+            EventMsg::ItemStarted(ItemStartedEvent { item, .. }) => {
+                if let codex_protocol::items::TurnItem::AgentMessage(item) = item {
+                    self.on_agent_message_item_started(item.phase);
+                }
+            }
             EventMsg::HookStarted(event) => self.on_hook_started(event),
             EventMsg::HookCompleted(event) => self.on_hook_completed(event),
             EventMsg::RealtimeConversationStarted(ev) => {
@@ -9436,10 +9532,10 @@ impl ChatWidget {
     pub(crate) fn set_reasoning_block_mode(&mut self, mode: ReasoningBlockMode) {
         self.config.tui_reasoning_blocks = mode;
         if mode == ReasoningBlockMode::Off
-            && self
-                .active_cell
-                .as_ref()
-                .is_some_and(|cell| cell.as_any().is::<history_cell::ReasoningBlockCell>())
+            && self.active_cell.as_ref().is_some_and(|cell| {
+                cell.as_any().is::<history_cell::ReasoningBlockCell>()
+                    || cell.as_any().is::<history_cell::ThinkingBlockCell>()
+            })
         {
             self.active_cell = None;
             self.bump_active_cell_revision();

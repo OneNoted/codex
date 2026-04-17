@@ -1,5 +1,6 @@
 use super::*;
 use codex_config::types::ReasoningBlockMode;
+use codex_protocol::protocol::ItemStartedEvent;
 use pretty_assertions::assert_eq;
 
 /// Receiving a TokenCount event without usage clears the context indicator.
@@ -1372,6 +1373,37 @@ async fn inline_reasoning_blocks_render_while_streaming_snapshot() {
 }
 
 #[tokio::test]
+async fn inline_commentary_blocks_render_while_streaming_snapshot() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.config.tui_reasoning_blocks = ReasoningBlockMode::Summary;
+
+    chat.handle_codex_event(Event {
+        id: "commentary-start".into(),
+        msg: EventMsg::ItemStarted(ItemStartedEvent {
+            thread_id: ThreadId::new(),
+            turn_id: "turn-1".to_string(),
+            item: TurnItem::AgentMessage(AgentMessageItem {
+                id: "commentary-1".to_string(),
+                content: Vec::new(),
+                phase: Some(MessagePhase::Commentary),
+                memory_citation: None,
+            }),
+        }),
+    });
+    chat.handle_codex_event(Event {
+        id: "commentary-delta".into(),
+        msg: EventMsg::AgentMessageDelta(AgentMessageDeltaEvent {
+            delta: "## Exploring the repo\n\nInspecting the workspace layout first.".into(),
+        }),
+    });
+
+    assert_chatwidget_snapshot!(
+        "inline_commentary_blocks_render_while_streaming_snapshot",
+        active_blob(&chat)
+    );
+}
+
+#[tokio::test]
 async fn final_reasoning_then_message_with_inline_blocks_snapshot() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.config.tui_reasoning_blocks = ReasoningBlockMode::Summary;
@@ -1396,6 +1428,29 @@ async fn final_reasoning_then_message_with_inline_blocks_snapshot() {
         .collect::<String>();
     assert_chatwidget_snapshot!(
         "final_reasoning_then_message_with_inline_blocks_snapshot",
+        combined
+    );
+}
+
+#[tokio::test]
+async fn commentary_completion_without_deltas_renders_inline_block_snapshot() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.config.tui_reasoning_blocks = ReasoningBlockMode::Summary;
+
+    complete_assistant_message(
+        &mut chat,
+        "msg-commentary-inline",
+        "## Exploring the repo\n\nInspecting the workspace layout first.",
+        Some(MessagePhase::Commentary),
+    );
+
+    let cells = drain_insert_history(&mut rx);
+    let combined = cells
+        .iter()
+        .map(|lines| lines_to_single_string(lines))
+        .collect::<String>();
+    assert_chatwidget_snapshot!(
+        "commentary_completion_without_deltas_renders_inline_block_snapshot",
         combined
     );
 }
