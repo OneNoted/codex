@@ -35,6 +35,15 @@ cargo build
 # Launch the TUI with a sample prompt.
 cargo run --bin codex -- "explain this codebase to me"
 
+# If you want to install a source-built binary that reports a real semver
+# instead of the workspace placeholder `0.0.0`, use the helper from the repo
+# root. It stamps the build with the latest upstream release version by
+# default before running `cargo install`.
+cd ..
+just install-source-build -- --root ~/.local --force
+~/.local/bin/codex --version
+cd codex-rs
+
 # After making changes, use the root justfile helpers (they default to codex-rs):
 just fmt
 just fix -p <crate-you-touched>
@@ -48,6 +57,10 @@ just test
 # If you specifically want full feature coverage, use:
 cargo test --all-features
 ```
+
+`cargo build` and `cargo run` are still fine for everyday local development.
+The source-install helper is only needed when you want an installed binary that
+does not identify itself as version `0.0.0`.
 
 ## Tracing / verbose logging
 
