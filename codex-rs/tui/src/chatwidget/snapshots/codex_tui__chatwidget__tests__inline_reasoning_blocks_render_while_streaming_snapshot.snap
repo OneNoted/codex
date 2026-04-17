@@ -1,0 +1,8 @@
+---
+source: tui/src/chatwidget/tests/status_and_layout.rs
+assertion_line: 1360
+expression: active_blob(&chat)
+---
+• Planning
+  
+  Inspect config state first.

@@ -1,0 +1,10 @@
+---
+source: tui/src/chatwidget/tests/status_and_layout.rs
+assertion_line: 1389
+expression: combined
+---
+• Planning
+  
+  I will first analyze the request.
+
+• Here is the result.

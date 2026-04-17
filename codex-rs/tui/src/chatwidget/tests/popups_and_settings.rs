@@ -1,5 +1,6 @@
 use super::*;
 use codex_app_server_protocol::AppInfo;
+use codex_config::types::ReasoningBlockMode;
 use pretty_assertions::assert_eq;
 
 #[tokio::test]
@@ -1951,6 +1952,36 @@ async fn realtime_microphone_picker_popup_snapshot() {
 
     let popup = render_bottom_popup(&chat, /*width*/ 80);
     assert_chatwidget_snapshot!("realtime_microphone_picker_popup", popup);
+}
+
+#[tokio::test]
+async fn reasoning_blocks_popup_snapshot() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.2-codex")).await;
+    chat.config.tui_reasoning_blocks = ReasoningBlockMode::Summary;
+    chat.open_reasoning_blocks_popup();
+
+    let popup = render_bottom_popup(&chat, /*width*/ 80);
+    assert_chatwidget_snapshot!("reasoning_blocks_popup", popup);
+}
+
+#[tokio::test]
+async fn reasoning_blocks_picker_emits_update_and_persist_events() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.2-codex")).await;
+    chat.open_reasoning_blocks_popup();
+
+    chat.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+    assert_matches!(
+        rx.try_recv(),
+        Ok(AppEvent::UpdateReasoningBlocks(ReasoningBlockMode::Summary))
+    );
+    assert_matches!(
+        rx.try_recv(),
+        Ok(AppEvent::PersistReasoningBlocks(
+            ReasoningBlockMode::Summary
+        ))
+    );
 }
 
 #[cfg(not(target_os = "linux"))]

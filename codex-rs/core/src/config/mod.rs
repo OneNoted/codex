@@ -41,6 +41,7 @@ use codex_config::types::OAuthCredentialsStoreMode;
 use codex_config::types::OtelConfig;
 use codex_config::types::OtelConfigToml;
 use codex_config::types::OtelExporterKind;
+use codex_config::types::ReasoningBlockMode;
 use codex_config::types::ShellEnvironmentPolicy;
 use codex_config::types::ToolSuggestConfig;
 use codex_config::types::ToolSuggestDiscoverable;
@@ -353,6 +354,9 @@ pub struct Config {
     ///
     /// When unset, the TUI defaults to: `model-with-reasoning` and `current-dir`.
     pub tui_status_line: Option<Vec<String>>,
+
+    /// Controls whether the TUI renders inline reasoning blocks.
+    pub tui_reasoning_blocks: ReasoningBlockMode,
 
     /// Ordered list of terminal title item identifiers for the TUI.
     ///
@@ -2286,6 +2290,11 @@ impl Config {
                 .map(|t| t.alternate_screen)
                 .unwrap_or_default(),
             tui_status_line: cfg.tui.as_ref().and_then(|t| t.status_line.clone()),
+            tui_reasoning_blocks: cfg
+                .tui
+                .as_ref()
+                .map(|t| t.reasoning_blocks)
+                .unwrap_or_default(),
             tui_terminal_title: cfg.tui.as_ref().and_then(|t| t.terminal_title.clone()),
             tui_theme: cfg.tui.as_ref().and_then(|t| t.theme.clone()),
             otel: {

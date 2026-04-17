@@ -1,0 +1,15 @@
+---
+source: tui/src/chatwidget/tests/popups_and_settings.rs
+assertion_line: 1662
+expression: popup
+---
+  Reasoning blocks
+  Choose whether reasoning is shown inline in the chat.
+
+  1. Off                Keep reasoning out of the main chat.
+› 2. Summary (current)  Show reasoning summaries inline while a turn is
+                        running.
+  3. Raw                Show raw reasoning inline when the provider exposes
+                        it.
+
+  Press enter to confirm or esc to go back

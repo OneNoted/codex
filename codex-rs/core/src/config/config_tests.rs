@@ -40,6 +40,7 @@ use codex_config::types::ModelAvailabilityNuxConfig;
 use codex_config::types::NotificationCondition;
 use codex_config::types::NotificationMethod;
 use codex_config::types::Notifications;
+use codex_config::types::ReasoningBlockMode;
 use codex_config::types::SandboxWorkspaceWrite;
 use codex_config::types::SkillsConfig;
 use codex_config::types::ToolSuggestDiscoverableType;
@@ -380,6 +381,7 @@ fn config_toml_deserializes_model_availability_nux() {
             notification_settings: TuiNotificationSettings::default(),
             animations: true,
             show_tooltips: true,
+            reasoning_blocks: ReasoningBlockMode::Off,
             alternate_screen: AltScreenMode::default(),
             status_line: None,
             terminal_title: None,
@@ -1183,6 +1185,7 @@ fn tui_config_missing_notifications_field_defaults_to_enabled() {
             notification_settings: TuiNotificationSettings::default(),
             animations: true,
             show_tooltips: true,
+            reasoning_blocks: ReasoningBlockMode::Off,
             alternate_screen: AltScreenMode::Auto,
             status_line: None,
             terminal_title: None,
@@ -4860,6 +4863,7 @@ async fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             tool_suggest: ToolSuggestConfig::default(),
             tui_alternate_screen: AltScreenMode::Auto,
             tui_status_line: None,
+            tui_reasoning_blocks: ReasoningBlockMode::Off,
             tui_terminal_title: None,
             tui_theme: None,
             otel: OtelConfig::default(),
@@ -5010,6 +5014,7 @@ async fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         tool_suggest: ToolSuggestConfig::default(),
         tui_alternate_screen: AltScreenMode::Auto,
         tui_status_line: None,
+        tui_reasoning_blocks: ReasoningBlockMode::Off,
         tui_terminal_title: None,
         tui_theme: None,
         otel: OtelConfig::default(),
@@ -5158,6 +5163,7 @@ async fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         tool_suggest: ToolSuggestConfig::default(),
         tui_alternate_screen: AltScreenMode::Auto,
         tui_status_line: None,
+        tui_reasoning_blocks: ReasoningBlockMode::Off,
         tui_terminal_title: None,
         tui_theme: None,
         otel: OtelConfig::default(),
@@ -5291,6 +5297,7 @@ async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         tool_suggest: ToolSuggestConfig::default(),
         tui_alternate_screen: AltScreenMode::Auto,
         tui_status_line: None,
+        tui_reasoning_blocks: ReasoningBlockMode::Off,
         tui_terminal_title: None,
         tui_theme: None,
         otel: OtelConfig::default(),

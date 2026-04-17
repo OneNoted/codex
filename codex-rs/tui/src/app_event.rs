@@ -34,6 +34,7 @@ use crate::history_cell::HistoryCell;
 use crate::legacy_core::plugins::PluginCapabilitySummary;
 
 use codex_config::types::ApprovalsReviewer;
+use codex_config::types::ReasoningBlockMode;
 use codex_features::Feature;
 use codex_protocol::config_types::CollaborationModeMask;
 use codex_protocol::config_types::Personality;
@@ -373,6 +374,15 @@ pub(crate) enum AppEvent {
     PersistServiceTierSelection {
         service_tier: Option<ServiceTier>,
     },
+
+    /// Open the TUI reasoning block mode picker.
+    OpenReasoningBlocksSelection,
+
+    /// Update the current inline reasoning block mode in the running app and widget.
+    UpdateReasoningBlocks(ReasoningBlockMode),
+
+    /// Persist the selected inline reasoning block mode to top-level config.
+    PersistReasoningBlocks(ReasoningBlockMode),
 
     /// Open the device picker for a realtime microphone or speaker.
     OpenRealtimeAudioDeviceSelection {

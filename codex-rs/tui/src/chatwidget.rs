@@ -107,6 +107,7 @@ use codex_app_server_protocol::TurnStatus;
 use codex_chatgpt::connectors;
 use codex_config::types::ApprovalsReviewer;
 use codex_config::types::Notifications;
+use codex_config::types::ReasoningBlockMode;
 use codex_config::types::WindowsSandboxModeToml;
 use codex_features::FEATURES;
 use codex_features::Feature;
@@ -259,6 +260,12 @@ const PLAN_MODE_REASONING_SCOPE_PLAN_ONLY: &str = "Apply to Plan mode override";
 const PLAN_MODE_REASONING_SCOPE_ALL_MODES: &str = "Apply to global default and Plan mode override";
 const CONNECTORS_SELECTION_VIEW_ID: &str = "connectors-selection";
 const TUI_STUB_MESSAGE: &str = "Not available in TUI yet.";
+
+#[derive(Clone, Copy)]
+enum ReasoningDeltaSource {
+    Summary,
+    Raw,
+}
 
 /// Choose the keybinding used to edit the most-recently queued message.
 ///
@@ -2279,11 +2286,51 @@ impl ChatWidget {
         }
     }
 
-    fn on_agent_reasoning_delta(&mut self, delta: String) {
-        // For reasoning deltas, do not stream to history. Accumulate the
-        // current reasoning block and extract the first bold element
-        // (between **/**) as the chunk header. Show this header as status.
+    fn inline_reasoning_blocks_enabled(&self) -> bool {
+        self.config.tui_reasoning_blocks != ReasoningBlockMode::Off
+    }
+
+    fn should_consume_raw_reasoning(&self) -> bool {
+        self.config.show_raw_agent_reasoning
+            || self.config.tui_reasoning_blocks == ReasoningBlockMode::Raw
+    }
+
+    fn ensure_active_reasoning_cell(&mut self) -> Option<&mut history_cell::ReasoningBlockCell> {
+        if !self.inline_reasoning_blocks_enabled() {
+            return None;
+        }
+
+        let has_reasoning_cell = self
+            .active_cell
+            .as_ref()
+            .is_some_and(|cell| cell.as_any().is::<history_cell::ReasoningBlockCell>());
+        if !has_reasoning_cell {
+            self.flush_active_cell();
+            self.active_cell = Some(Box::new(history_cell::new_active_reasoning_block(
+                self.config.tui_reasoning_blocks,
+                &self.config.cwd,
+            )));
+            self.bump_active_cell_revision();
+        }
+
+        self.active_cell.as_mut().and_then(|cell| {
+            cell.as_any_mut()
+                .downcast_mut::<history_cell::ReasoningBlockCell>()
+        })
+    }
+
+    fn on_agent_reasoning_delta(&mut self, delta: String, source: ReasoningDeltaSource) {
+        // Keep buffering reasoning text so transcript-only history and the status header stay
+        // consistent even when inline blocks are disabled.
         self.reasoning_buffer.push_str(&delta);
+
+        if let Some(cell) = self.ensure_active_reasoning_cell() {
+            match source {
+                ReasoningDeltaSource::Summary => cell.push_summary_delta(&delta),
+                ReasoningDeltaSource::Raw => cell.push_raw_delta(&delta),
+            }
+            self.bump_active_cell_revision();
+        }
 
         if self.unified_exec_wait_streak.is_some() {
             // Unified exec waiting should take precedence over reasoning-derived status headers.
@@ -2292,19 +2339,42 @@ impl ChatWidget {
         }
 
         if let Some(header) = extract_first_bold(&self.reasoning_buffer) {
-            // Update the shimmer header to the extracted reasoning chunk header.
             self.terminal_title_status_kind = TerminalTitleStatusKind::Thinking;
             self.set_status_header(header);
-        } else {
-            // Fallback while we don't yet have a bold header: leave existing header as-is.
         }
         self.request_redraw();
     }
 
+    fn seed_reasoning_from_completed_item(&mut self, summary: &[String], content: &[String]) {
+        if !self.reasoning_buffer.is_empty() || !self.full_reasoning_buffer.is_empty() {
+            return;
+        }
+
+        for (index, delta) in summary.iter().enumerate() {
+            if index > 0 {
+                self.on_reasoning_section_break();
+            }
+            self.on_agent_reasoning_delta(delta.clone(), ReasoningDeltaSource::Summary);
+        }
+
+        if self.should_consume_raw_reasoning() {
+            for delta in content {
+                self.on_agent_reasoning_delta(delta.clone(), ReasoningDeltaSource::Raw);
+            }
+        }
+    }
+
     fn on_agent_reasoning_final(&mut self) {
-        // At the end of a reasoning block, record transcript-only content.
         self.full_reasoning_buffer.push_str(&self.reasoning_buffer);
-        if !self.full_reasoning_buffer.is_empty() {
+        if self.inline_reasoning_blocks_enabled() {
+            let has_reasoning_cell = self
+                .active_cell
+                .as_ref()
+                .is_some_and(|cell| cell.as_any().is::<history_cell::ReasoningBlockCell>());
+            if has_reasoning_cell {
+                self.flush_active_cell();
+            }
+        } else if !self.full_reasoning_buffer.is_empty() {
             let cell = history_cell::new_reasoning_summary_block(
                 self.full_reasoning_buffer.clone(),
                 &self.config.cwd,
@@ -2317,10 +2387,14 @@ impl ChatWidget {
     }
 
     fn on_reasoning_section_break(&mut self) {
-        // Start a new reasoning block for header extraction and accumulate transcript.
         self.full_reasoning_buffer.push_str(&self.reasoning_buffer);
         self.full_reasoning_buffer.push_str("\n\n");
         self.reasoning_buffer.clear();
+
+        if let Some(cell) = self.ensure_active_reasoning_cell() {
+            cell.push_summary_section_break();
+            self.bump_active_cell_revision();
+        }
     }
 
     // Raw reasoning uses the same flow as summarized reasoning
@@ -5795,16 +5869,8 @@ impl ChatWidget {
             ThreadItem::Reasoning {
                 summary, content, ..
             } => {
-                if from_replay {
-                    for delta in summary {
-                        self.on_agent_reasoning_delta(delta);
-                    }
-                    if self.config.show_raw_agent_reasoning {
-                        for delta in content {
-                            self.on_agent_reasoning_delta(delta);
-                        }
-                    }
-                }
+                let _ = from_replay;
+                self.seed_reasoning_from_completed_item(&summary, &content);
                 self.on_agent_reasoning_final();
             }
             ThreadItem::CommandExecution {
@@ -6122,11 +6188,11 @@ impl ChatWidget {
             }
             ServerNotification::PlanDelta(notification) => self.on_plan_delta(notification.delta),
             ServerNotification::ReasoningSummaryTextDelta(notification) => {
-                self.on_agent_reasoning_delta(notification.delta);
+                self.on_agent_reasoning_delta(notification.delta, ReasoningDeltaSource::Summary);
             }
             ServerNotification::ReasoningTextDelta(notification) => {
-                if self.config.show_raw_agent_reasoning {
-                    self.on_agent_reasoning_delta(notification.delta);
+                if self.should_consume_raw_reasoning() {
+                    self.on_agent_reasoning_delta(notification.delta, ReasoningDeltaSource::Raw);
                 }
             }
             ServerNotification::ReasoningSummaryPartAdded(_) => self.on_reasoning_section_break(),
@@ -6665,13 +6731,24 @@ impl ChatWidget {
                 self.on_agent_message_delta(delta)
             }
             EventMsg::PlanDelta(event) => self.on_plan_delta(event.delta),
-            EventMsg::AgentReasoningDelta(AgentReasoningDeltaEvent { delta })
-            | EventMsg::AgentReasoningRawContentDelta(AgentReasoningRawContentDeltaEvent {
+            EventMsg::AgentReasoningDelta(AgentReasoningDeltaEvent { delta }) => {
+                self.on_agent_reasoning_delta(delta, ReasoningDeltaSource::Summary)
+            }
+            EventMsg::AgentReasoningRawContentDelta(AgentReasoningRawContentDeltaEvent {
                 delta,
-            }) => self.on_agent_reasoning_delta(delta),
-            EventMsg::AgentReasoning(AgentReasoningEvent { .. }) => self.on_agent_reasoning_final(),
+            }) => {
+                if self.should_consume_raw_reasoning() {
+                    self.on_agent_reasoning_delta(delta, ReasoningDeltaSource::Raw);
+                }
+            }
+            EventMsg::AgentReasoning(AgentReasoningEvent { text }) => {
+                self.on_agent_reasoning_delta(text, ReasoningDeltaSource::Summary);
+                self.on_agent_reasoning_final();
+            }
             EventMsg::AgentReasoningRawContent(AgentReasoningRawContentEvent { text }) => {
-                self.on_agent_reasoning_delta(text);
+                if self.should_consume_raw_reasoning() {
+                    self.on_agent_reasoning_delta(text, ReasoningDeltaSource::Raw);
+                }
                 self.on_agent_reasoning_final();
             }
             EventMsg::AgentReasoningSectionBreak(_) => self.on_reasoning_section_break(),
@@ -7626,22 +7703,77 @@ impl ChatWidget {
     }
 
     pub(crate) fn open_realtime_audio_popup(&mut self) {
+        let mut items = vec![SelectionItem {
+            name: "Reasoning blocks".to_string(),
+            description: Some(format!(
+                "Current: {}",
+                Self::reasoning_block_mode_label(self.config.tui_reasoning_blocks)
+            )),
+            actions: vec![Box::new(|tx| {
+                tx.send(AppEvent::OpenReasoningBlocksSelection);
+            })],
+            dismiss_on_select: true,
+            ..Default::default()
+        }];
+
+        items.extend(
+            [
+                RealtimeAudioDeviceKind::Microphone,
+                RealtimeAudioDeviceKind::Speaker,
+            ]
+            .into_iter()
+            .map(|kind| {
+                let description = Some(format!(
+                    "Current: {}",
+                    self.current_realtime_audio_selection_label(kind)
+                ));
+                let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
+                    tx.send(AppEvent::OpenRealtimeAudioDeviceSelection { kind });
+                })];
+                SelectionItem {
+                    name: kind.title().to_string(),
+                    description,
+                    actions,
+                    dismiss_on_select: true,
+                    ..Default::default()
+                }
+            }),
+        );
+
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            title: Some("Settings".to_string()),
+            subtitle: Some("Configure settings for Codex.".to_string()),
+            footer_hint: Some(standard_popup_hint_line()),
+            items,
+            ..Default::default()
+        });
+    }
+
+    pub(crate) fn open_reasoning_blocks_popup(&mut self) {
         let items = [
-            RealtimeAudioDeviceKind::Microphone,
-            RealtimeAudioDeviceKind::Speaker,
+            (
+                ReasoningBlockMode::Off,
+                "Keep reasoning out of the main chat.",
+            ),
+            (
+                ReasoningBlockMode::Summary,
+                "Show reasoning summaries inline while a turn is running.",
+            ),
+            (
+                ReasoningBlockMode::Raw,
+                "Show raw reasoning inline when the provider exposes it.",
+            ),
         ]
         .into_iter()
-        .map(|kind| {
-            let description = Some(format!(
-                "Current: {}",
-                self.current_realtime_audio_selection_label(kind)
-            ));
+        .map(|(mode, description)| {
             let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
-                tx.send(AppEvent::OpenRealtimeAudioDeviceSelection { kind });
+                tx.send(AppEvent::UpdateReasoningBlocks(mode));
+                tx.send(AppEvent::PersistReasoningBlocks(mode));
             })];
             SelectionItem {
-                name: kind.title().to_string(),
-                description,
+                name: Self::reasoning_block_mode_label(mode).to_string(),
+                description: Some(description.to_string()),
+                is_current: self.config.tui_reasoning_blocks == mode,
                 actions,
                 dismiss_on_select: true,
                 ..Default::default()
@@ -7649,9 +7781,14 @@ impl ChatWidget {
         })
         .collect();
 
+        let mut header = ColumnRenderable::new();
+        header.push(Line::from("Reasoning blocks".bold()));
+        header.push(Line::from(
+            "Choose whether reasoning is shown inline in the chat.".dim(),
+        ));
+
         self.bottom_pane.show_selection_view(SelectionViewParams {
-            title: Some("Settings".to_string()),
-            subtitle: Some("Configure settings for Codex.".to_string()),
+            header: Box::new(header),
             footer_hint: Some(standard_popup_hint_line()),
             items,
             ..Default::default()
@@ -9287,6 +9424,30 @@ impl ChatWidget {
         self.refresh_model_dependent_surfaces();
     }
 
+    pub(crate) fn set_reasoning_block_mode(&mut self, mode: ReasoningBlockMode) {
+        self.config.tui_reasoning_blocks = mode;
+        if mode == ReasoningBlockMode::Off
+            && self
+                .active_cell
+                .as_ref()
+                .is_some_and(|cell| cell.as_any().is::<history_cell::ReasoningBlockCell>())
+        {
+            self.active_cell = None;
+            self.bump_active_cell_revision();
+            self.request_redraw();
+            return;
+        }
+
+        if let Some(cell) = self.active_cell.as_mut().and_then(|cell| {
+            cell.as_any_mut()
+                .downcast_mut::<history_cell::ReasoningBlockCell>()
+        }) {
+            cell.set_mode(mode);
+            self.bump_active_cell_revision();
+            self.request_redraw();
+        }
+    }
+
     /// Set the personality in the widget's config copy.
     pub(crate) fn set_personality(&mut self, personality: Personality) {
         self.config.personality = Some(personality);
@@ -9422,6 +9583,14 @@ impl ChatWidget {
     fn current_realtime_audio_selection_label(&self, kind: RealtimeAudioDeviceKind) -> String {
         self.current_realtime_audio_device_name(kind)
             .unwrap_or_else(|| "System default".to_string())
+    }
+
+    fn reasoning_block_mode_label(mode: ReasoningBlockMode) -> &'static str {
+        match mode {
+            ReasoningBlockMode::Off => "Off",
+            ReasoningBlockMode::Summary => "Summary",
+            ReasoningBlockMode::Raw => "Raw",
+        }
     }
 
     fn sync_fast_command_enabled(&mut self) {

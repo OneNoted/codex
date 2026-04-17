@@ -1,4 +1,5 @@
 use super::*;
+use codex_config::types::ReasoningBlockMode;
 use pretty_assertions::assert_eq;
 
 /// Receiving a TokenCount event without usage clears the context indicator.
@@ -1348,6 +1349,53 @@ async fn final_reasoning_then_message_without_deltas_are_rendered() {
         .collect::<String>();
     assert_chatwidget_snapshot!(
         "final_reasoning_then_message_without_deltas_are_rendered",
+        combined
+    );
+}
+
+#[tokio::test]
+async fn inline_reasoning_blocks_render_while_streaming_snapshot() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.config.tui_reasoning_blocks = ReasoningBlockMode::Summary;
+
+    chat.handle_codex_event(Event {
+        id: "s1".into(),
+        msg: EventMsg::AgentReasoningDelta(AgentReasoningDeltaEvent {
+            delta: "**Planning**\n\nInspect config state first.".into(),
+        }),
+    });
+
+    assert_chatwidget_snapshot!(
+        "inline_reasoning_blocks_render_while_streaming_snapshot",
+        active_blob(&chat)
+    );
+}
+
+#[tokio::test]
+async fn final_reasoning_then_message_with_inline_blocks_snapshot() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.config.tui_reasoning_blocks = ReasoningBlockMode::Summary;
+
+    chat.handle_codex_event(Event {
+        id: "s1".into(),
+        msg: EventMsg::AgentReasoning(AgentReasoningEvent {
+            text: "**Planning**\n\nI will first analyze the request.".into(),
+        }),
+    });
+    complete_assistant_message(
+        &mut chat,
+        "msg-result",
+        "Here is the result.",
+        /*phase*/ None,
+    );
+
+    let cells = drain_insert_history(&mut rx);
+    let combined = cells
+        .iter()
+        .map(|lines| lines_to_single_string(lines))
+        .collect::<String>();
+    assert_chatwidget_snapshot!(
+        "final_reasoning_then_message_with_inline_blocks_snapshot",
         combined
     );
 }

@@ -110,6 +110,7 @@ use codex_app_server_protocol::TurnError as AppServerTurnError;
 use codex_app_server_protocol::TurnStatus;
 use codex_config::types::ApprovalsReviewer;
 use codex_config::types::ModelAvailabilityNuxConfig;
+use codex_config::types::ReasoningBlockMode;
 use codex_exec_server::EnvironmentManager;
 use codex_features::Feature;
 use codex_models_manager::collaboration_mode_presets::CollaborationModesConfig;
@@ -4961,6 +4962,9 @@ impl App {
             AppEvent::UpdateReasoningEffort(effort) => {
                 self.on_update_reasoning_effort(effort);
             }
+            AppEvent::UpdateReasoningBlocks(mode) => {
+                self.on_update_reasoning_blocks(mode);
+            }
             AppEvent::UpdateModel(model) => {
                 self.chat_widget.set_model(&model);
             }
@@ -4969,6 +4973,9 @@ impl App {
             }
             AppEvent::UpdatePersonality(personality) => {
                 self.on_update_personality(personality);
+            }
+            AppEvent::OpenReasoningBlocksSelection => {
+                self.chat_widget.open_reasoning_blocks_popup();
             }
             AppEvent::OpenRealtimeAudioDeviceSelection { kind } => {
                 self.chat_widget.open_realtime_audio_device_selection(kind);
@@ -5553,6 +5560,30 @@ impl App {
                         self.chat_widget.add_error_message(format!(
                             "Failed to save realtime {}: {err}",
                             kind.noun()
+                        ));
+                    }
+                }
+            }
+            AppEvent::PersistReasoningBlocks(mode) => {
+                let edit = ConfigEdit::SetPath {
+                    segments: vec!["tui".to_string(), "reasoning_blocks".to_string()],
+                    value: mode.to_string().into(),
+                };
+                match ConfigEditsBuilder::new(&self.config.codex_home)
+                    .with_edits([edit])
+                    .apply()
+                    .await
+                {
+                    Ok(()) => {
+                        self.chat_widget.add_info_message(
+                            format!("Reasoning blocks set to {mode}"),
+                            /*hint*/ None,
+                        );
+                    }
+                    Err(err) => {
+                        tracing::error!(error = %err, "failed to persist reasoning blocks");
+                        self.chat_widget.add_error_message(format!(
+                            "Failed to save reasoning blocks setting: {err}"
                         ));
                     }
                 }
@@ -6279,6 +6310,11 @@ impl App {
         // Instead, explicitly pass the stored collaboration mode's effort into new sessions.
         self.config.model_reasoning_effort = effort;
         self.chat_widget.set_reasoning_effort(effort);
+    }
+
+    fn on_update_reasoning_blocks(&mut self, mode: ReasoningBlockMode) {
+        self.config.tui_reasoning_blocks = mode;
+        self.chat_widget.set_reasoning_block_mode(mode);
     }
 
     fn on_update_personality(&mut self, personality: Personality) {
