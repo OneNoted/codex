@@ -246,6 +246,47 @@ async fn enter_with_only_remote_images_submits_user_turn() {
 }
 
 #[tokio::test]
+async fn enter_submits_reasoning_summary_when_inline_reasoning_blocks_are_enabled() {
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let conversation_id = ThreadId::new();
+    let rollout_file = NamedTempFile::new().unwrap();
+    let configured = codex_protocol::protocol::SessionConfiguredEvent {
+        session_id: conversation_id,
+        forked_from_id: None,
+        thread_name: None,
+        model: "test-model".to_string(),
+        model_provider_id: "test-provider".to_string(),
+        service_tier: None,
+        approval_policy: AskForApproval::Never,
+        approvals_reviewer: ApprovalsReviewer::User,
+        sandbox_policy: SandboxPolicy::new_read_only_policy(),
+        cwd: test_path_buf("/home/user/project").abs(),
+        reasoning_effort: Some(ReasoningEffortConfig::default()),
+        history_log_id: 0,
+        history_entry_count: 0,
+        initial_messages: None,
+        network_proxy: None,
+        rollout_path: Some(rollout_file.path().to_path_buf()),
+    };
+    chat.handle_codex_event(Event {
+        id: "initial".into(),
+        msg: EventMsg::SessionConfigured(configured),
+    });
+    drain_insert_history(&mut rx);
+    chat.config.tui_reasoning_blocks = ReasoningBlockMode::Summary;
+    chat.bottom_pane
+        .set_composer_text("inspect this repo".to_string(), Vec::new(), Vec::new());
+
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+    let summary = match next_submit_op(&mut op_rx) {
+        Op::UserTurn { summary, .. } => summary,
+        other => panic!("expected Op::UserTurn, got {other:?}"),
+    };
+    assert_eq!(summary, Some(ReasoningSummary::Auto));
+}
+
+#[tokio::test]
 async fn shift_enter_with_only_remote_images_does_not_submit_user_turn() {
     let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 

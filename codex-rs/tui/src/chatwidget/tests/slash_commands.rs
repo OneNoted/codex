@@ -257,6 +257,18 @@ async fn slash_logout_requests_app_server_logout() {
 }
 
 #[tokio::test]
+async fn slash_settings_opens_popup_even_when_audio_device_selection_is_disabled() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.set_feature_enabled(Feature::RealtimeConversation, /*enabled*/ false);
+
+    submit_composer_text(&mut chat, "/settings");
+
+    let popup = render_bottom_popup(&chat, /*width*/ 80);
+    assert!(popup.contains("Settings"));
+    assert!(popup.contains("Reasoning blocks"));
+}
+
+#[tokio::test]
 async fn slash_copy_state_tracks_turn_complete_final_reply() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 

@@ -126,6 +126,7 @@ use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::CollaborationModeMask;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::Personality;
+use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::Settings;
 #[cfg(target_os = "windows")]
@@ -5020,9 +5021,6 @@ impl ChatWidget {
             .set_realtime_conversation_enabled(widget.realtime_conversation_enabled());
         widget
             .bottom_pane
-            .set_audio_device_selection_enabled(widget.realtime_audio_device_selection_enabled());
-        widget
-            .bottom_pane
             .set_status_line_enabled(!widget.configured_status_line_items().is_empty());
         widget
             .bottom_pane
@@ -5615,6 +5613,17 @@ impl ChatWidget {
             .filter(|_| self.config.features.enabled(Feature::Personality))
             .filter(|_| self.current_model_supports_personality());
         let service_tier = Some(self.config.service_tier);
+        let reasoning_summary = if self.inline_reasoning_blocks_enabled()
+            || self.config.model_reasoning_summary.is_some()
+        {
+            Some(
+                self.config
+                    .model_reasoning_summary
+                    .unwrap_or(ReasoningSummary::Auto),
+            )
+        } else {
+            None
+        };
         let op = AppCommand::user_turn(
             items,
             self.config.cwd.to_path_buf(),
@@ -5622,7 +5631,7 @@ impl ChatWidget {
             self.config.permissions.sandbox_policy.get().clone(),
             effective_mode.model().to_string(),
             effective_mode.reasoning_effort(),
-            /*summary*/ None,
+            reasoning_summary,
             service_tier,
             /*final_output_json_schema*/ None,
             collaboration_mode,
@@ -7716,29 +7725,31 @@ impl ChatWidget {
             ..Default::default()
         }];
 
-        items.extend(
-            [
-                RealtimeAudioDeviceKind::Microphone,
-                RealtimeAudioDeviceKind::Speaker,
-            ]
-            .into_iter()
-            .map(|kind| {
-                let description = Some(format!(
-                    "Current: {}",
-                    self.current_realtime_audio_selection_label(kind)
-                ));
-                let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
-                    tx.send(AppEvent::OpenRealtimeAudioDeviceSelection { kind });
-                })];
-                SelectionItem {
-                    name: kind.title().to_string(),
-                    description,
-                    actions,
-                    dismiss_on_select: true,
-                    ..Default::default()
-                }
-            }),
-        );
+        if self.realtime_audio_device_selection_enabled() {
+            items.extend(
+                [
+                    RealtimeAudioDeviceKind::Microphone,
+                    RealtimeAudioDeviceKind::Speaker,
+                ]
+                .into_iter()
+                .map(|kind| {
+                    let description = Some(format!(
+                        "Current: {}",
+                        self.current_realtime_audio_selection_label(kind)
+                    ));
+                    let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
+                        tx.send(AppEvent::OpenRealtimeAudioDeviceSelection { kind });
+                    })];
+                    SelectionItem {
+                        name: kind.title().to_string(),
+                        description,
+                        actions,
+                        dismiss_on_select: true,
+                        ..Default::default()
+                    }
+                }),
+            );
+        }
 
         self.bottom_pane.show_selection_view(SelectionViewParams {
             title: Some("Settings".to_string()),
@@ -9315,8 +9326,6 @@ impl ChatWidget {
             let realtime_conversation_enabled = self.realtime_conversation_enabled();
             self.bottom_pane
                 .set_realtime_conversation_enabled(realtime_conversation_enabled);
-            self.bottom_pane
-                .set_audio_device_selection_enabled(self.realtime_audio_device_selection_enabled());
             if !realtime_conversation_enabled && self.realtime_conversation.is_live() {
                 self.request_realtime_conversation_close(Some(
                     "Realtime voice mode was closed because the feature was disabled.".to_string(),
