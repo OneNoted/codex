@@ -156,8 +156,9 @@ impl Transport<RoleClient> for ExecutorProcessTransport {
     }
 
     async fn close(&mut self) -> std::result::Result<(), Self::Error> {
+        self.process.terminate().await.map_err(io::Error::other)?;
         self.terminated = true;
-        self.process.terminate().await.map_err(io::Error::other)
+        Ok(())
     }
 }
 
@@ -176,11 +177,10 @@ impl ExecutorProcessTransport {
 
             match self.events.recv().await {
                 Ok(ExecProcessEvent::Output(chunk)) => {
-                    self.note_seq(chunk.seq);
                     // The executor pushes raw process bytes. This is the only
                     // place where those bytes are split back into the stdout
                     // protocol stream and stderr diagnostics.
-                    self.push_process_output(chunk);
+                    self.push_process_output_if_new(chunk);
                 }
                 Ok(ExecProcessEvent::Exited { seq, .. }) => {
                     self.note_seq(seq);
@@ -223,6 +223,14 @@ impl ExecutorProcessTransport {
         self.last_seq = self.last_seq.max(seq);
     }
 
+    fn should_accept_seq(&mut self, seq: u64) -> bool {
+        if seq <= self.last_seq {
+            return false;
+        }
+        self.last_seq = seq;
+        true
+    }
+
     async fn recover_lagged_events(&mut self) -> io::Result<()> {
         let response = self
             .process
@@ -234,8 +242,7 @@ impl ExecutorProcessTransport {
             .await
             .map_err(io::Error::other)?;
         for chunk in response.chunks {
-            self.note_seq(chunk.seq);
-            self.push_process_output(chunk);
+            self.push_process_output_if_new(chunk);
         }
         self.last_seq = self.last_seq.max(response.next_seq.saturating_sub(1));
         if let Some(message) = response.failure {
@@ -248,6 +255,13 @@ impl ExecutorProcessTransport {
             self.closed = true;
         }
         Ok(())
+    }
+
+    fn push_process_output_if_new(&mut self, chunk: ProcessOutputChunk) {
+        if !self.should_accept_seq(chunk.seq) {
+            return;
+        }
+        self.push_process_output(chunk);
     }
 
     fn push_process_output(&mut self, chunk: ProcessOutputChunk) {

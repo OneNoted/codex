@@ -5402,6 +5402,8 @@ impl CodexMessageProcessor {
                 config.cwd.to_path_buf(),
             ),
             Err(err) => {
+                // TODO(aibrahim): Investigate degrading MCP status listing when
+                // executor environment creation fails.
                 let error = JSONRPCErrorError {
                     code: INTERNAL_ERROR_CODE,
                     message: format!("failed to create environment: {err}"),
