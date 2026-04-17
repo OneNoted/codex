@@ -117,7 +117,13 @@ fn remote_aware_stdio_server_bin() -> anyhow::Result<String> {
     // Remote-aware MCP tests run the executor inside Docker. The stdio test
     // server is built on the host, so hand the executor a copied in-container
     // path instead of the host build artifact path.
-    let remote_path = "/tmp/codex-remote-env/test_stdio_server";
+    // Several remote-aware MCP tests can run in parallel; give each copied
+    // binary its own path so one test cannot replace another test's executable.
+    let unique_suffix = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let remote_path = format!(
+        "/tmp/codex-remote-env/test_stdio_server-{}-{unique_suffix}",
+        std::process::id()
+    );
     let container_target = format!("{container_name}:{remote_path}");
     let copy_output = StdCommand::new("docker")
         .arg("cp")
@@ -133,7 +139,7 @@ fn remote_aware_stdio_server_bin() -> anyhow::Result<String> {
     );
 
     let chmod_output = StdCommand::new("docker")
-        .args(["exec", &container_name, "chmod", "+x", remote_path])
+        .args(["exec", &container_name, "chmod", "+x", remote_path.as_str()])
         .output()
         .context("mark remote test_stdio_server executable")?;
     ensure!(
@@ -143,7 +149,7 @@ fn remote_aware_stdio_server_bin() -> anyhow::Result<String> {
         String::from_utf8_lossy(&chmod_output.stderr).trim()
     );
 
-    Ok(remote_path.to_string())
+    Ok(remote_path)
 }
 
 async fn wait_for_mcp_tool(fixture: &TestCodex, tool_name: &str) -> anyhow::Result<()> {
