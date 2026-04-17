@@ -1401,7 +1401,9 @@ mod tests {
             access: FileSystemAccessMode::Write,
         }]);
 
-        let args = create_filesystem_args(&policy, temp_dir.path()).expect("filesystem args");
+        let args =
+            create_filesystem_args(&policy, temp_dir.path(), NO_UNREADABLE_GLOB_SCAN_MAX_DEPTH)
+                .expect("filesystem args");
         let git_dest = path_to_string(&workspace.join(".git"));
 
         assert!(
