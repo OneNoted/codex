@@ -81,6 +81,16 @@ pub(super) struct ExecutorProcessTransport {
     /// subscription failure. Once closed, any remaining partial stdout line is
     /// flushed once and then rmcp receives EOF.
     closed: bool,
+
+    /// Whether this transport already asked the executor to terminate the MCP
+    /// server process.
+    terminated: bool,
+
+    /// Highest executor process event sequence observed by this transport.
+    ///
+    /// When the pushed event stream lags, use this as the retained-output read
+    /// cursor to recover missed stdout/stderr chunks from the executor.
+    last_seq: u64,
 }
 
 impl ExecutorProcessTransport {
@@ -97,6 +107,8 @@ impl ExecutorProcessTransport {
             stdout: Vec::new(),
             stderr: Vec::new(),
             closed: false,
+            terminated: false,
+            last_seq: 0,
         }
     }
 
@@ -144,19 +156,28 @@ impl Transport<RoleClient> for ExecutorProcessTransport {
     }
 
     async fn close(&mut self) -> std::result::Result<(), Self::Error> {
+        self.terminated = true;
         self.process.terminate().await.map_err(io::Error::other)
     }
 }
 
 // Remote private implementation.
 
+enum BufferedStdoutMessage {
+    Message(RxJsonRpcMessage<RoleClient>),
+    MalformedLine,
+    Pending,
+}
+
 impl ExecutorProcessTransport {
     async fn receive_message(&mut self) -> Option<RxJsonRpcMessage<RoleClient>> {
         loop {
             // rmcp stdio framing is line-oriented JSON. We first drain any
             // complete line already buffered from an earlier process event.
-            if let Some(message) = self.take_stdout_message(/*allow_partial*/ self.closed) {
-                return Some(message);
+            match self.take_stdout_message(/*allow_partial*/ self.closed) {
+                BufferedStdoutMessage::Message(message) => return Some(message),
+                BufferedStdoutMessage::MalformedLine => continue,
+                BufferedStdoutMessage::Pending => {}
             }
             if self.closed {
                 self.flush_stderr();
@@ -165,17 +186,20 @@ impl ExecutorProcessTransport {
 
             match self.events.recv().await {
                 Ok(ExecProcessEvent::Output(chunk)) => {
+                    self.note_seq(chunk.seq);
                     // The executor pushes raw process bytes. This is the only
                     // place where those bytes are split back into the stdout
                     // protocol stream and stderr diagnostics.
                     self.push_process_output(chunk);
                 }
-                Ok(ExecProcessEvent::Exited { .. }) => {
+                Ok(ExecProcessEvent::Exited { seq, .. }) => {
+                    self.note_seq(seq);
                     // Wait for `Closed` before ending the rmcp stream so any
                     // output flushed during process shutdown can still be
                     // decoded into JSON-RPC messages.
                 }
-                Ok(ExecProcessEvent::Closed { .. }) => {
+                Ok(ExecProcessEvent::Closed { seq }) => {
+                    self.note_seq(seq);
                     self.closed = true;
                 }
                 Ok(ExecProcessEvent::Failed(message)) => {
@@ -190,13 +214,50 @@ impl ExecutorProcessTransport {
                         "Remote MCP server output stream lagged ({}): skipped {skipped} events",
                         self.program_name
                     );
-                    self.closed = true;
+                    if let Err(error) = self.recover_lagged_events().await {
+                        warn!(
+                            "Failed to recover remote MCP server output stream ({}): {error}",
+                            self.program_name
+                        );
+                        self.closed = true;
+                    }
                 }
                 Err(broadcast::error::RecvError::Closed) => {
                     self.closed = true;
                 }
             }
         }
+    }
+
+    fn note_seq(&mut self, seq: u64) {
+        self.last_seq = self.last_seq.max(seq);
+    }
+
+    async fn recover_lagged_events(&mut self) -> io::Result<()> {
+        let response = self
+            .process
+            .read(
+                Some(self.last_seq),
+                /*max_bytes*/ None,
+                /*wait_ms*/ Some(0),
+            )
+            .await
+            .map_err(io::Error::other)?;
+        for chunk in response.chunks {
+            self.note_seq(chunk.seq);
+            self.push_process_output(chunk);
+        }
+        self.last_seq = self.last_seq.max(response.next_seq.saturating_sub(1));
+        if let Some(message) = response.failure {
+            warn!(
+                "Remote MCP server process failed ({}): {message}",
+                self.program_name
+            );
+            self.closed = true;
+        } else if response.closed {
+            self.closed = true;
+        }
+        Ok(())
     }
 
     fn push_process_output(&mut self, chunk: ProcessOutputChunk) {
@@ -216,7 +277,7 @@ impl ExecutorProcessTransport {
         }
     }
 
-    fn take_stdout_message(&mut self, allow_partial: bool) -> Option<RxJsonRpcMessage<RoleClient>> {
+    fn take_stdout_message(&mut self, allow_partial: bool) -> BufferedStdoutMessage {
         // A normal MCP stdio server emits one JSON-RPC message per newline.
         // If the process has already closed, accept a final unterminated line
         // so EOF after a complete JSON object behaves like local rmcp's
@@ -229,17 +290,17 @@ impl ExecutorProcessTransport {
                 line
             }
             (None, true) => self.stdout.drain(..).collect(),
-            (None, false) => return None,
+            (None, false) => return BufferedStdoutMessage::Pending,
         };
         let line = Self::trim_trailing_carriage_return(line);
         match from_slice::<RxJsonRpcMessage<RoleClient>>(&line) {
-            Ok(message) => Some(message),
+            Ok(message) => BufferedStdoutMessage::Message(message),
             Err(error) => {
                 debug!(
                     "Failed to parse remote MCP server message ({}): {error}",
                     self.program_name
                 );
-                None
+                BufferedStdoutMessage::MalformedLine
             }
         }
     }
@@ -279,5 +340,20 @@ impl ExecutorProcessTransport {
             line.pop();
         }
         line
+    }
+}
+
+impl Drop for ExecutorProcessTransport {
+    fn drop(&mut self) {
+        if self.terminated {
+            return;
+        }
+
+        let process = Arc::clone(&self.process);
+        tokio::spawn(async move {
+            if let Err(error) = process.terminate().await {
+                warn!("Failed to terminate remote MCP server process on drop: {error}");
+            }
+        });
     }
 }

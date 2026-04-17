@@ -80,6 +80,7 @@ use codex_login::CodexAuth;
 use codex_login::auth_env_telemetry::collect_auth_env_telemetry;
 use codex_login::default_client::originator;
 use codex_mcp::McpConnectionManager;
+use codex_mcp::McpRuntimeEnvironment;
 use codex_mcp::ToolInfo;
 use codex_mcp::codex_apps_tools_cache_key;
 #[cfg(test)]
@@ -2248,8 +2249,12 @@ impl Session {
             INITIAL_SUBMIT_ID.to_owned(),
             tx_event.clone(),
             session_configuration.sandbox_policy.get().clone(),
-            environment.clone(),
-            session_configuration.cwd.to_path_buf(),
+            McpRuntimeEnvironment::new(
+                environment
+                    .clone()
+                    .unwrap_or_else(|| Arc::new(Environment::default())),
+                session_configuration.cwd.to_path_buf(),
+            ),
             config.codex_home.to_path_buf(),
             codex_apps_tools_cache_key(auth),
             tool_plugin_provenance,
@@ -4586,8 +4591,13 @@ impl Session {
             turn_context.sub_id.clone(),
             self.get_tx_event(),
             turn_context.sandbox_policy.get().clone(),
-            turn_context.environment.clone(),
-            turn_context.cwd.to_path_buf(),
+            McpRuntimeEnvironment::new(
+                turn_context
+                    .environment
+                    .clone()
+                    .unwrap_or_else(|| Arc::new(Environment::default())),
+                turn_context.cwd.to_path_buf(),
+            ),
             config.codex_home.to_path_buf(),
             codex_apps_tools_cache_key(auth.as_ref()),
             tool_plugin_provenance,

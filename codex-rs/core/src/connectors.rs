@@ -14,6 +14,7 @@ pub use codex_app_server_protocol::AppInfo;
 pub use codex_app_server_protocol::AppMetadata;
 use codex_connectors::AllConnectorsCacheKey;
 use codex_connectors::DirectoryListResponse;
+use codex_exec_server::Environment;
 use codex_login::token_data::TokenData;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_tools::DiscoverableTool;
@@ -40,6 +41,7 @@ use codex_login::default_client::is_first_party_chat_originator;
 use codex_login::default_client::originator;
 use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
 use codex_mcp::McpConnectionManager;
+use codex_mcp::McpRuntimeEnvironment;
 use codex_mcp::ToolInfo;
 use codex_mcp::ToolPluginProvenance;
 use codex_mcp::codex_apps_tools_cache_key;
@@ -233,8 +235,7 @@ pub async fn list_accessible_connectors_from_mcp_tools_with_options_and_status(
         INITIAL_SUBMIT_ID.to_owned(),
         tx_event,
         SandboxPolicy::new_read_only_policy(),
-        /*environment*/ None,
-        config.codex_home.to_path_buf(),
+        McpRuntimeEnvironment::new(Arc::new(Environment::default()), config.cwd.to_path_buf()),
         config.codex_home.to_path_buf(),
         codex_apps_tools_cache_key(auth.as_ref()),
         ToolPluginProvenance::default(),

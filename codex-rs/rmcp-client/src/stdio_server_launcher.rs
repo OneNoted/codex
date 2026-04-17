@@ -27,7 +27,9 @@ use std::time::Duration;
 
 use anyhow::Result;
 use anyhow::anyhow;
+use codex_config::types::ShellEnvironmentPolicyInherit;
 use codex_exec_server::ExecBackend;
+use codex_exec_server::ExecEnvPolicy;
 use codex_exec_server::ExecParams;
 #[cfg(unix)]
 use codex_utils_pty::process_group::kill_process_group;
@@ -49,6 +51,7 @@ use tracing::warn;
 use crate::executor_process_transport::ExecutorProcessTransport;
 use crate::program_resolver;
 use crate::utils::create_env_for_mcp_server;
+use crate::utils::create_env_overlay_for_remote_mcp_server;
 
 // General purpose public code.
 
@@ -346,14 +349,12 @@ impl ExecutorStdioServerLauncher {
             cwd,
         } = command;
         let program_name = program.to_string_lossy().into_owned();
-        let envs = create_env_for_mcp_server(env, &env_vars);
-        let resolved_program =
-            program_resolver::resolve(program, &envs).map_err(io::Error::other)?;
+        let envs = create_env_overlay_for_remote_mcp_server(env, &env_vars);
         // The executor protocol carries argv/env as UTF-8 strings. Local stdio can
         // accept arbitrary OsString values because it calls the OS directly; remote
         // stdio must reject non-Unicode command, argument, or environment data
         // before sending an executor request.
-        let argv = Self::process_api_argv(&resolved_program, &args).map_err(io::Error::other)?;
+        let argv = Self::process_api_argv(&program, &args).map_err(io::Error::other)?;
         let env = Self::process_api_env(envs).map_err(io::Error::other)?;
         let process_id = ExecutorProcessTransport::next_process_id();
         // Start the MCP server process on the executor with raw pipes. `tty=false`
@@ -364,7 +365,7 @@ impl ExecutorStdioServerLauncher {
                 process_id,
                 argv,
                 cwd: cwd.unwrap_or(default_cwd),
-                env_policy: None,
+                env_policy: Some(Self::remote_env_policy()),
                 env,
                 tty: false,
                 pipe_stdin: true,
@@ -412,5 +413,15 @@ impl ExecutorStdioServerLauncher {
         value
             .into_string()
             .map_err(|_| anyhow!("{label} must be valid Unicode for remote MCP stdio"))
+    }
+
+    fn remote_env_policy() -> ExecEnvPolicy {
+        ExecEnvPolicy {
+            inherit: ShellEnvironmentPolicyInherit::Core,
+            ignore_default_excludes: true,
+            exclude: Vec::new(),
+            r#set: HashMap::new(),
+            include_only: Vec::new(),
+        }
     }
 }
