@@ -11,6 +11,7 @@ use codex_protocol::protocol::GitInfo;
 use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionSource;
+use codex_protocol::protocol::ThreadMemoryMode as MemoryMode;
 use codex_protocol::protocol::TokenUsage;
 use serde::Deserialize;
 use serde::Serialize;
@@ -188,6 +189,19 @@ pub struct SetThreadNameParams {
     pub thread_id: ThreadId,
     /// Normalized thread name.
     pub name: String,
+    /// Whether archived threads are eligible.
+    pub include_archived: bool,
+}
+
+/// Parameters for setting thread memory behavior.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SetThreadMemoryModeParams {
+    /// Thread id to update.
+    pub thread_id: ThreadId,
+    /// New memory mode for the thread.
+    pub memory_mode: MemoryMode,
+    /// Whether archived threads are eligible.
+    pub include_archived: bool,
 }
 
 /// Optional field patch where omission leaves a value unchanged and `Some(None)` clears it.

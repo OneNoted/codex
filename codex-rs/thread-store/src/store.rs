@@ -7,6 +7,7 @@ use crate::ListThreadsParams;
 use crate::LoadThreadHistoryParams;
 use crate::ReadThreadParams;
 use crate::ResumeThreadRecorderParams;
+use crate::SetThreadMemoryModeParams;
 use crate::SetThreadNameParams;
 use crate::StoredThread;
 use crate::StoredThreadHistory;
@@ -46,7 +47,14 @@ pub trait ThreadStore: Send + Sync {
     async fn list_threads(&self, params: ListThreadsParams) -> ThreadStoreResult<ThreadPage>;
 
     /// Sets a user-facing thread name.
-    async fn set_thread_name(&self, params: SetThreadNameParams) -> ThreadStoreResult<()>;
+    async fn set_thread_name(&self, params: SetThreadNameParams)
+    -> ThreadStoreResult<StoredThread>;
+
+    /// Sets thread memory behavior.
+    async fn set_thread_memory_mode(
+        &self,
+        params: SetThreadMemoryModeParams,
+    ) -> ThreadStoreResult<StoredThread>;
 
     /// Applies a mutable metadata patch and returns the updated thread.
     async fn update_thread_metadata(
