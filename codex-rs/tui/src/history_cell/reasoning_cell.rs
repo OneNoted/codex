@@ -1,11 +1,8 @@
 use super::HistoryCell;
-use super::RtOptions;
-use super::adaptive_wrap_lines;
-use super::append_markdown;
+use super::markdown_block::MarkdownBlockFormat;
+use super::markdown_block::render_markdown_block;
 use codex_config::types::ReasoningBlockMode;
 use ratatui::prelude::Line;
-use ratatui::style::Style;
-use ratatui::style::Stylize;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -56,37 +53,11 @@ impl ReasoningBlockCell {
     }
 
     fn lines(&self, width: u16) -> Vec<Line<'static>> {
-        let text = self.visible_text().trim();
-        if text.is_empty() {
-            return Vec::new();
-        }
-
-        let mut lines: Vec<Line<'static>> = Vec::new();
-        append_markdown(
-            text,
-            Some((width as usize).saturating_sub(2)),
-            Some(self.cwd.as_path()),
-            &mut lines,
-        );
-
-        let style = Style::default().dim().italic();
-        let styled_lines = lines
-            .into_iter()
-            .map(|mut line| {
-                line.spans = line
-                    .spans
-                    .into_iter()
-                    .map(|span| span.patch_style(style))
-                    .collect();
-                line
-            })
-            .collect::<Vec<_>>();
-
-        adaptive_wrap_lines(
-            &styled_lines,
-            RtOptions::new(width as usize)
-                .initial_indent("• ".dim().into())
-                .subsequent_indent("  ".into()),
+        render_markdown_block(
+            self.visible_text(),
+            width,
+            self.cwd.as_path(),
+            MarkdownBlockFormat::Bulleted,
         )
     }
 }

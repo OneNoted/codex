@@ -95,12 +95,15 @@ use unicode_width::UnicodeWidthStr;
 use url::Url;
 
 mod hook_cell;
+mod markdown_block;
 mod reasoning_cell;
 mod thinking_cell;
 
 pub(crate) use hook_cell::HookCell;
 pub(crate) use hook_cell::new_active_hook_cell;
 pub(crate) use hook_cell::new_completed_hook_cell;
+use markdown_block::MarkdownBlockFormat;
+use markdown_block::render_markdown_block;
 pub(crate) use reasoning_cell::ReasoningBlockCell;
 pub(crate) use reasoning_cell::new_active_reasoning_block;
 pub(crate) use thinking_cell::ThinkingBlockCell;
@@ -416,31 +419,11 @@ impl ReasoningSummaryCell {
     }
 
     fn lines(&self, width: u16) -> Vec<Line<'static>> {
-        let mut lines: Vec<Line<'static>> = Vec::new();
-        append_markdown(
+        render_markdown_block(
             &self.content,
-            Some((width as usize).saturating_sub(2)),
-            Some(self.cwd.as_path()),
-            &mut lines,
-        );
-        let summary_style = Style::default().dim().italic();
-        let summary_lines = lines
-            .into_iter()
-            .map(|mut line| {
-                line.spans = line
-                    .spans
-                    .into_iter()
-                    .map(|span| span.patch_style(summary_style))
-                    .collect();
-                line
-            })
-            .collect::<Vec<_>>();
-
-        adaptive_wrap_lines(
-            &summary_lines,
-            RtOptions::new(width as usize)
-                .initial_indent("• ".dim().into())
-                .subsequent_indent("  ".into()),
+            width,
+            self.cwd.as_path(),
+            MarkdownBlockFormat::Bulleted,
         )
     }
 }

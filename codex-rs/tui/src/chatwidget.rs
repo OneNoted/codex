@@ -2227,27 +2227,35 @@ impl ChatWidget {
         self.active_agent_message_phase = phase;
     }
 
+    fn active_cell_is<T: HistoryCell + 'static>(&self) -> bool {
+        self.active_cell
+            .as_ref()
+            .is_some_and(|cell| cell.as_any().is::<T>())
+    }
+
+    fn ensure_active_inline_cell<T, F>(&mut self, new_cell: F) -> Option<&mut T>
+    where
+        T: HistoryCell + 'static,
+        F: FnOnce() -> T,
+    {
+        if !self.active_cell_is::<T>() {
+            self.flush_active_cell();
+            self.active_cell = Some(Box::new(new_cell()));
+            self.bump_active_cell_revision();
+        }
+
+        self.active_cell
+            .as_mut()
+            .and_then(|cell| cell.as_any_mut().downcast_mut::<T>())
+    }
+
     fn ensure_active_thinking_cell(&mut self) -> Option<&mut history_cell::ThinkingBlockCell> {
         if !self.inline_reasoning_blocks_enabled() {
             return None;
         }
 
-        let has_thinking_cell = self
-            .active_cell
-            .as_ref()
-            .is_some_and(|cell| cell.as_any().is::<history_cell::ThinkingBlockCell>());
-        if !has_thinking_cell {
-            self.flush_active_cell();
-            self.active_cell = Some(Box::new(history_cell::new_active_thinking_block(
-                &self.config.cwd,
-            )));
-            self.bump_active_cell_revision();
-        }
-
-        self.active_cell.as_mut().and_then(|cell| {
-            cell.as_any_mut()
-                .downcast_mut::<history_cell::ThinkingBlockCell>()
-        })
+        let cwd = self.config.cwd.clone();
+        self.ensure_active_inline_cell(|| history_cell::new_active_thinking_block(&cwd))
     }
 
     fn seed_thinking_from_completed_message(&mut self, message: &str) {
@@ -2359,23 +2367,9 @@ impl ChatWidget {
             return None;
         }
 
-        let has_reasoning_cell = self
-            .active_cell
-            .as_ref()
-            .is_some_and(|cell| cell.as_any().is::<history_cell::ReasoningBlockCell>());
-        if !has_reasoning_cell {
-            self.flush_active_cell();
-            self.active_cell = Some(Box::new(history_cell::new_active_reasoning_block(
-                self.config.tui_reasoning_blocks,
-                &self.config.cwd,
-            )));
-            self.bump_active_cell_revision();
-        }
-
-        self.active_cell.as_mut().and_then(|cell| {
-            cell.as_any_mut()
-                .downcast_mut::<history_cell::ReasoningBlockCell>()
-        })
+        let mode = self.config.tui_reasoning_blocks;
+        let cwd = self.config.cwd.clone();
+        self.ensure_active_inline_cell(|| history_cell::new_active_reasoning_block(mode, &cwd))
     }
 
     fn on_agent_reasoning_delta(&mut self, delta: String, source: ReasoningDeltaSource) {
@@ -2426,11 +2420,7 @@ impl ChatWidget {
     fn on_agent_reasoning_final(&mut self) {
         self.full_reasoning_buffer.push_str(&self.reasoning_buffer);
         if self.inline_reasoning_blocks_enabled() {
-            let has_reasoning_cell = self
-                .active_cell
-                .as_ref()
-                .is_some_and(|cell| cell.as_any().is::<history_cell::ReasoningBlockCell>());
-            if has_reasoning_cell {
+            if self.active_cell_is::<history_cell::ReasoningBlockCell>() {
                 self.flush_active_cell();
             }
         } else if !self.full_reasoning_buffer.is_empty() {
@@ -2528,11 +2518,7 @@ impl ChatWidget {
             self.add_boxed_history(cell);
         }
         self.flush_unified_exec_wait_streak();
-        if self
-            .active_cell
-            .as_ref()
-            .is_some_and(|cell| cell.as_any().is::<history_cell::ThinkingBlockCell>())
-        {
+        if self.active_cell_is::<history_cell::ThinkingBlockCell>() {
             self.flush_active_cell();
         }
         if !from_replay {
@@ -4409,11 +4395,7 @@ impl ChatWidget {
         match phase {
             Some(MessagePhase::Commentary) if self.inline_reasoning_blocks_enabled() => {
                 self.seed_thinking_from_completed_message(&message);
-                if self
-                    .active_cell
-                    .as_ref()
-                    .is_some_and(|cell| cell.as_any().is::<history_cell::ThinkingBlockCell>())
-                {
+                if self.active_cell_is::<history_cell::ThinkingBlockCell>() {
                     self.flush_active_cell();
                     self.request_redraw();
                 }
@@ -9532,10 +9514,8 @@ impl ChatWidget {
     pub(crate) fn set_reasoning_block_mode(&mut self, mode: ReasoningBlockMode) {
         self.config.tui_reasoning_blocks = mode;
         if mode == ReasoningBlockMode::Off
-            && self.active_cell.as_ref().is_some_and(|cell| {
-                cell.as_any().is::<history_cell::ReasoningBlockCell>()
-                    || cell.as_any().is::<history_cell::ThinkingBlockCell>()
-            })
+            && (self.active_cell_is::<history_cell::ReasoningBlockCell>()
+                || self.active_cell_is::<history_cell::ThinkingBlockCell>())
         {
             self.active_cell = None;
             self.bump_active_cell_revision();
