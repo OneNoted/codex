@@ -1404,6 +1404,86 @@ async fn inline_commentary_blocks_render_while_streaming_snapshot() {
 }
 
 #[tokio::test]
+async fn switching_inline_reasoning_block_to_raw_updates_active_cell_in_place() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.config.tui_reasoning_blocks = ReasoningBlockMode::Summary;
+    chat.config.show_raw_agent_reasoning = true;
+
+    chat.handle_codex_event(Event {
+        id: "summary".into(),
+        msg: EventMsg::AgentReasoningDelta(AgentReasoningDeltaEvent {
+            delta: "Summary path".into(),
+        }),
+    });
+    chat.handle_codex_event(Event {
+        id: "raw".into(),
+        msg: EventMsg::AgentReasoningRawContentDelta(AgentReasoningRawContentDeltaEvent {
+            delta: "Raw path".into(),
+        }),
+    });
+
+    let summary_rendered = active_blob(&chat);
+    assert!(
+        summary_rendered.contains("Summary path"),
+        "expected summary mode to show summary text, got {summary_rendered:?}"
+    );
+    assert!(
+        !summary_rendered.contains("Raw path"),
+        "expected summary mode to hide raw text, got {summary_rendered:?}"
+    );
+
+    chat.set_reasoning_block_mode(ReasoningBlockMode::Raw);
+
+    let raw_rendered = active_blob(&chat);
+    assert!(
+        raw_rendered.contains("Raw path"),
+        "expected raw mode to show raw text, got {raw_rendered:?}"
+    );
+    assert!(
+        !raw_rendered.contains("Summary path"),
+        "expected raw mode to replace summary text, got {raw_rendered:?}"
+    );
+}
+
+#[tokio::test]
+async fn turning_reasoning_blocks_off_clears_active_commentary_block() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.config.tui_reasoning_blocks = ReasoningBlockMode::Summary;
+
+    chat.handle_codex_event(Event {
+        id: "commentary-start".into(),
+        msg: EventMsg::ItemStarted(ItemStartedEvent {
+            thread_id: ThreadId::new(),
+            turn_id: "turn-1".to_string(),
+            item: TurnItem::AgentMessage(AgentMessageItem {
+                id: "commentary-1".to_string(),
+                content: Vec::new(),
+                phase: Some(MessagePhase::Commentary),
+                memory_citation: None,
+            }),
+        }),
+    });
+    chat.handle_codex_event(Event {
+        id: "commentary-delta".into(),
+        msg: EventMsg::AgentMessageDelta(AgentMessageDeltaEvent {
+            delta: "## Exploring the repo".into(),
+        }),
+    });
+
+    assert!(
+        chat.active_cell.is_some(),
+        "expected commentary block to be active before disabling reasoning blocks"
+    );
+
+    chat.set_reasoning_block_mode(ReasoningBlockMode::Off);
+
+    assert!(
+        chat.active_cell.is_none(),
+        "expected disabling reasoning blocks to clear active commentary block"
+    );
+}
+
+#[tokio::test]
 async fn final_reasoning_then_message_with_inline_blocks_snapshot() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.config.tui_reasoning_blocks = ReasoningBlockMode::Summary;
