@@ -164,7 +164,7 @@ impl Transport<RoleClient> for ExecutorProcessTransport {
 // Remote private implementation.
 
 enum BufferedStdoutMessage {
-    Message(RxJsonRpcMessage<RoleClient>),
+    Message(Box<RxJsonRpcMessage<RoleClient>>),
     MalformedLine,
     Pending,
 }
@@ -175,7 +175,7 @@ impl ExecutorProcessTransport {
             // rmcp stdio framing is line-oriented JSON. We first drain any
             // complete line already buffered from an earlier process event.
             match self.take_stdout_message(/*allow_partial*/ self.closed) {
-                BufferedStdoutMessage::Message(message) => return Some(message),
+                BufferedStdoutMessage::Message(message) => return Some(*message),
                 BufferedStdoutMessage::MalformedLine => continue,
                 BufferedStdoutMessage::Pending => {}
             }
@@ -294,7 +294,7 @@ impl ExecutorProcessTransport {
         };
         let line = Self::trim_trailing_carriage_return(line);
         match from_slice::<RxJsonRpcMessage<RoleClient>>(&line) {
-            Ok(message) => BufferedStdoutMessage::Message(message),
+            Ok(message) => BufferedStdoutMessage::Message(Box::new(message)),
             Err(error) => {
                 debug!(
                     "Failed to parse remote MCP server message ({}): {error}",
