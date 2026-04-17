@@ -1351,11 +1351,11 @@ function parseMcpToolResult(result) {
     return { images: [], textCount: typeof error === "string" && error ? 1 : 0 };
   }
 
-  if (!("Ok" in result) && !Array.isArray(result.content)) {
+  if (!("Ok" in result)) {
     throw new Error("codex.emitImage received an unsupported MCP result");
   }
 
-  const ok = "Ok" in result ? result.Ok : result;
+  const ok = result.Ok;
   if (!isPlainObject(ok) || !Array.isArray(ok.content)) {
     throw new Error("codex.emitImage received malformed MCP content");
   }
@@ -1431,7 +1431,7 @@ function normalizeEmitImageValue(value) {
   }
 
   if (value.type === "mcp_tool_call_output") {
-    return requireSingleImage(parseMcpToolResult(value.result ?? value.output));
+    return requireSingleImage(parseMcpToolResult(value.result));
   }
 
   if ("output" in value) {
