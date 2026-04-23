@@ -37,6 +37,7 @@ pub(crate) struct CommandPopupFlags {
     pub(crate) personality_command_enabled: bool,
     pub(crate) realtime_conversation_enabled: bool,
     pub(crate) windows_degraded_sandbox_active: bool,
+    pub(crate) side_conversation_active: bool,
 }
 
 impl From<CommandPopupFlags> for slash_commands::BuiltinCommandFlags {
@@ -49,6 +50,7 @@ impl From<CommandPopupFlags> for slash_commands::BuiltinCommandFlags {
             personality_command_enabled: value.personality_command_enabled,
             realtime_conversation_enabled: value.realtime_conversation_enabled,
             allow_elevate_sandbox: value.windows_degraded_sandbox_active,
+            side_conversation_active: value.side_conversation_active,
         }
     }
 }
@@ -356,6 +358,7 @@ mod tests {
             personality_command_enabled: true,
             realtime_conversation_enabled: false,
             windows_degraded_sandbox_active: false,
+            side_conversation_active: false,
         });
         popup.on_composer_text_change("/collab".to_string());
 
@@ -375,6 +378,7 @@ mod tests {
             personality_command_enabled: true,
             realtime_conversation_enabled: false,
             windows_degraded_sandbox_active: false,
+            side_conversation_active: false,
         });
         popup.on_composer_text_change("/plan".to_string());
 
@@ -394,6 +398,7 @@ mod tests {
             personality_command_enabled: false,
             realtime_conversation_enabled: false,
             windows_degraded_sandbox_active: false,
+            side_conversation_active: false,
         });
         popup.on_composer_text_change("/pers".to_string());
 
@@ -420,6 +425,7 @@ mod tests {
             personality_command_enabled: true,
             realtime_conversation_enabled: false,
             windows_degraded_sandbox_active: false,
+            side_conversation_active: false,
         });
         popup.on_composer_text_change("/personality".to_string());
 
@@ -430,7 +436,7 @@ mod tests {
     }
 
     #[test]
-    fn settings_command_visible_when_audio_device_selection_is_disabled() {
+    fn settings_command_stays_visible_when_audio_device_selection_is_disabled() {
         let mut popup = CommandPopup::new(CommandPopupFlags {
             collaboration_modes_enabled: false,
             connectors_enabled: false,
@@ -439,6 +445,7 @@ mod tests {
             personality_command_enabled: true,
             realtime_conversation_enabled: true,
             windows_degraded_sandbox_active: false,
+            side_conversation_active: false,
         });
         popup.on_composer_text_change("/set".to_string());
 
