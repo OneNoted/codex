@@ -1,0 +1,7 @@
+---
+source: tui/src/chatwidget/tests/status_and_layout.rs
+expression: active_blob(&chat)
+---
+## Exploring the repo
+
+Inspecting the workspace layout first.
