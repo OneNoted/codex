@@ -14,6 +14,7 @@ pub use codex_protocol::config_types::AltScreenMode;
 pub use codex_protocol::config_types::ApprovalsReviewer;
 pub use codex_protocol::config_types::ModeKind;
 pub use codex_protocol::config_types::Personality;
+pub use codex_protocol::config_types::ReasoningBlockMode;
 pub use codex_protocol::config_types::ServiceTier;
 pub use codex_protocol::config_types::WebSearchMode;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -548,6 +549,11 @@ pub struct Tui {
     /// Defaults to `true`.
     #[serde(default = "default_true")]
     pub show_tooltips: bool,
+
+    /// Controls whether reasoning is rendered as inline blocks in the TUI.
+    /// Defaults to `off`.
+    #[serde(default)]
+    pub reasoning_blocks: ReasoningBlockMode,
 
     /// Controls whether the TUI uses the terminal's alternate screen buffer.
     ///

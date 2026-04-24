@@ -512,6 +512,9 @@ impl App {
             AppEvent::UpdateReasoningEffort(effort) => {
                 self.on_update_reasoning_effort(effort);
             }
+            AppEvent::UpdateReasoningBlocks(mode) => {
+                self.on_update_reasoning_blocks(mode);
+            }
             AppEvent::UpdateModel(model) => {
                 self.chat_widget.set_model(&model);
             }
@@ -520,6 +523,9 @@ impl App {
             }
             AppEvent::UpdatePersonality(personality) => {
                 self.on_update_personality(personality);
+            }
+            AppEvent::OpenReasoningBlocksSelection => {
+                self.chat_widget.open_reasoning_blocks_popup();
             }
             AppEvent::OpenRealtimeAudioDeviceSelection { kind } => {
                 self.chat_widget.open_realtime_audio_device_selection(kind);
@@ -913,6 +919,30 @@ impl App {
                 #[cfg(not(target_os = "windows"))]
                 {
                     let _ = (preset, mode);
+                }
+            }
+            AppEvent::PersistReasoningBlocks(mode) => {
+                let edit = ConfigEdit::SetPath {
+                    segments: vec!["tui".to_string(), "reasoning_blocks".to_string()],
+                    value: mode.to_string().into(),
+                };
+                match ConfigEditsBuilder::new(&self.config.codex_home)
+                    .with_edits([edit])
+                    .apply()
+                    .await
+                {
+                    Ok(()) => {
+                        self.chat_widget.add_info_message(
+                            format!("Reasoning blocks set to {mode}"),
+                            /*hint*/ None,
+                        );
+                    }
+                    Err(err) => {
+                        tracing::error!(error = %err, "failed to persist reasoning blocks");
+                        self.chat_widget.add_error_message(format!(
+                            "Failed to save reasoning blocks setting: {err}"
+                        ));
+                    }
                 }
             }
             AppEvent::PersistModelSelection { model, effort } => {

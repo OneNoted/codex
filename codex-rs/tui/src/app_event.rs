@@ -35,6 +35,7 @@ use crate::bottom_pane::StatusLineItem;
 use crate::bottom_pane::TerminalTitleItem;
 use crate::chatwidget::UserMessage;
 use codex_config::types::ApprovalsReviewer;
+use codex_config::types::ReasoningBlockMode;
 use codex_features::Feature;
 use codex_plugin::PluginCapabilitySummary;
 use codex_protocol::config_types::CollaborationModeMask;
@@ -371,6 +372,15 @@ pub(crate) enum AppEvent {
 
     /// Update the current reasoning effort in the running app and widget.
     UpdateReasoningEffort(Option<ReasoningEffort>),
+
+    /// Open the TUI reasoning block mode picker.
+    OpenReasoningBlocksSelection,
+
+    /// Update the current inline reasoning block mode in the running app and widget.
+    UpdateReasoningBlocks(ReasoningBlockMode),
+
+    /// Persist the selected inline reasoning block mode to top-level config.
+    PersistReasoningBlocks(ReasoningBlockMode),
 
     /// Update the current model slug in the running app and widget.
     UpdateModel(String),
