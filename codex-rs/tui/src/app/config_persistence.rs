@@ -5,6 +5,7 @@
 //! loop.
 
 use super::*;
+use codex_config::types::ReasoningBlockMode;
 
 impl App {
     pub(super) async fn rebuild_config_for_cwd(&self, cwd: PathBuf) -> Result<Config> {
@@ -504,6 +505,11 @@ impl App {
         // Instead, explicitly pass the stored collaboration mode's effort into new sessions.
         self.config.model_reasoning_effort = effort;
         self.chat_widget.set_reasoning_effort(effort);
+    }
+
+    pub(super) fn on_update_reasoning_blocks(&mut self, mode: ReasoningBlockMode) {
+        self.config.tui_reasoning_blocks = mode;
+        self.chat_widget.set_reasoning_block_mode(mode);
     }
 
     pub(super) fn on_update_personality(&mut self, personality: Personality) {

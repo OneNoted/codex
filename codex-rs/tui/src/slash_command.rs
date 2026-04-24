@@ -102,7 +102,7 @@ impl SlashCommand {
             }
             SlashCommand::Personality => "choose a communication style for Codex",
             SlashCommand::Realtime => "toggle realtime voice mode (experimental)",
-            SlashCommand::Settings => "configure realtime microphone/speaker",
+            SlashCommand::Settings => "configure TUI settings",
             SlashCommand::Plan => "switch to Plan mode",
             SlashCommand::Collab => "change collaboration mode (experimental)",
             SlashCommand::Agent | SlashCommand::MultiAgents => "switch the active agent thread",

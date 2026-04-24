@@ -249,6 +249,7 @@ pub(super) async fn make_chatwidget_manual(
         interrupts: InterruptManager::new(),
         reasoning_buffer: String::new(),
         full_reasoning_buffer: String::new(),
+        active_agent_message_phase: None,
         current_status: StatusIndicatorState::working(),
         active_hook_cell: None,
         retry_status_header: None,

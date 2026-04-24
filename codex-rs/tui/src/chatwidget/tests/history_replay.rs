@@ -1,4 +1,5 @@
 use super::*;
+use codex_config::types::ReasoningBlockMode;
 use codex_protocol::protocol::FileSystemAccessMode;
 use codex_protocol::protocol::FileSystemPath;
 use codex_protocol::protocol::FileSystemSandboxEntry;
@@ -851,6 +852,103 @@ async fn replayed_reasoning_item_shows_raw_reasoning_when_enabled() {
         other => panic!("expected InsertHistoryCell, got {other:?}"),
     };
     assert!(rendered.contains("Raw reasoning"));
+}
+
+#[tokio::test]
+async fn replayed_reasoning_item_shows_raw_reasoning_when_inline_raw_mode_enabled() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.config.show_raw_agent_reasoning = false;
+    chat.config.tui_reasoning_blocks = ReasoningBlockMode::Raw;
+    chat.handle_codex_event(Event {
+        id: "configured".into(),
+        msg: EventMsg::SessionConfigured(SessionConfiguredEvent {
+            session_id: ThreadId::new(),
+            forked_from_id: None,
+            thread_name: None,
+            model: "test-model".to_string(),
+            model_provider_id: "test-provider".to_string(),
+            service_tier: None,
+            approval_policy: AskForApproval::Never,
+            approvals_reviewer: ApprovalsReviewer::User,
+            sandbox_policy: SandboxPolicy::new_read_only_policy(),
+            permission_profile: None,
+            cwd: test_project_path().abs(),
+            reasoning_effort: None,
+            history_log_id: 0,
+            history_entry_count: 0,
+            initial_messages: None,
+            network_proxy: None,
+            rollout_path: None,
+        }),
+    });
+    let _ = drain_insert_history(&mut rx);
+
+    chat.replay_thread_item(
+        AppServerThreadItem::Reasoning {
+            id: "reasoning-1".to_string(),
+            summary: vec!["Summary only".to_string()],
+            content: vec!["Raw reasoning".to_string()],
+        },
+        "turn-1".to_string(),
+        ReplayKind::ThreadSnapshot,
+    );
+
+    let rendered = match rx.try_recv() {
+        Ok(AppEvent::InsertHistoryCell(cell)) => {
+            lines_to_single_string(&cell.transcript_lines(/*width*/ 80))
+        }
+        other => panic!("expected InsertHistoryCell, got {other:?}"),
+    };
+    assert!(rendered.contains("Raw reasoning"));
+}
+
+#[tokio::test]
+async fn replayed_commentary_item_renders_inline_block_when_enabled() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.config.tui_reasoning_blocks = ReasoningBlockMode::Summary;
+
+    chat.handle_codex_event(Event {
+        id: "configured".into(),
+        msg: EventMsg::SessionConfigured(SessionConfiguredEvent {
+            session_id: ThreadId::new(),
+            forked_from_id: None,
+            thread_name: None,
+            model: "test-model".to_string(),
+            model_provider_id: "test-provider".to_string(),
+            service_tier: None,
+            approval_policy: AskForApproval::Never,
+            approvals_reviewer: ApprovalsReviewer::User,
+            sandbox_policy: SandboxPolicy::new_read_only_policy(),
+            permission_profile: None,
+            cwd: test_project_path().abs(),
+            reasoning_effort: None,
+            history_log_id: 0,
+            history_entry_count: 0,
+            initial_messages: None,
+            network_proxy: None,
+            rollout_path: None,
+        }),
+    });
+    let _ = drain_insert_history(&mut rx);
+
+    chat.replay_thread_item(
+        AppServerThreadItem::AgentMessage {
+            id: "commentary-1".to_string(),
+            text: "## Exploring the repo\n\nInspecting the workspace layout first.".to_string(),
+            phase: Some(MessagePhase::Commentary),
+            memory_citation: None,
+        },
+        "turn-1".to_string(),
+        ReplayKind::ThreadSnapshot,
+    );
+
+    let rendered = match rx.try_recv() {
+        Ok(AppEvent::InsertHistoryCell(cell)) => lines_to_single_string(&cell.display_lines(80)),
+        other => panic!("expected InsertHistoryCell, got {other:?}"),
+    };
+    assert!(rendered.contains("## Exploring the repo"));
+    assert!(rendered.contains("Inspecting the workspace layout first."));
+    assert!(!rendered.contains("• "));
 }
 
 #[tokio::test]

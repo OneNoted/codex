@@ -111,6 +111,7 @@ use codex_chatgpt::connectors;
 use codex_config::ConfigLayerStackOrdering;
 use codex_config::types::ApprovalsReviewer;
 use codex_config::types::Notifications;
+use codex_config::types::ReasoningBlockMode;
 use codex_config::types::WindowsSandboxModeToml;
 use codex_core_skills::model::SkillMetadata;
 use codex_features::FEATURES;
@@ -131,6 +132,7 @@ use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::CollaborationModeMask;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::Personality;
+use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::Settings;
 #[cfg(target_os = "windows")]
@@ -185,6 +187,8 @@ use codex_protocol::protocol::GuardianAssessmentEvent;
 use codex_protocol::protocol::GuardianAssessmentStatus;
 use codex_protocol::protocol::ImageGenerationBeginEvent;
 use codex_protocol::protocol::ImageGenerationEndEvent;
+#[cfg(test)]
+use codex_protocol::protocol::ItemStartedEvent;
 use codex_protocol::protocol::ListSkillsResponseEvent;
 #[cfg(test)]
 use codex_protocol::protocol::McpListToolsResponseEvent;
@@ -258,6 +262,12 @@ const DEFAULT_MODEL_DISPLAY_NAME: &str = "loading";
 const MULTI_AGENT_ENABLE_TITLE: &str = "Enable subagents?";
 const MULTI_AGENT_ENABLE_YES: &str = "Yes, enable";
 const MULTI_AGENT_ENABLE_NO: &str = "Not now";
+
+#[derive(Clone, Copy)]
+enum ReasoningDeltaSource {
+    Summary,
+    Raw,
+}
 const MULTI_AGENT_ENABLE_NOTICE: &str = "Subagents will be enabled in the next session.";
 const TRUSTED_ACCESS_FOR_CYBER_VERIFICATION_WARNING: &str = "Your conversations have multiple flags for possible cybersecurity risk. Responses may take longer because extra safety checks are on. To get authorized for security work, join the Trusted Access for Cyber program: https://chatgpt.com/cyber";
 const MEMORIES_DOC_URL: &str = "https://developers.openai.com/codex/memories";
@@ -889,6 +899,8 @@ pub(crate) struct ChatWidget {
     reasoning_buffer: String,
     // Accumulates full reasoning content for transcript-only recording
     full_reasoning_buffer: String,
+    // The active streamed agent-message phase when the provider exposes it on item starts.
+    active_agent_message_phase: Option<MessagePhase>,
     // The currently rendered footer state. We keep the already-formatted
     // details here so transient stream interruptions can restore the footer
     // exactly as it was shown.
@@ -2400,7 +2412,69 @@ impl ChatWidget {
         self.finalize_completed_assistant_message(Some(&message));
     }
 
+    fn on_agent_message_item_started(&mut self, phase: Option<MessagePhase>) {
+        self.active_agent_message_phase = phase;
+    }
+
+    fn active_cell_is<T: HistoryCell + 'static>(&self) -> bool {
+        self.active_cell
+            .as_ref()
+            .is_some_and(|cell| cell.as_any().is::<T>())
+    }
+
+    fn ensure_active_inline_cell<T, F>(&mut self, new_cell: F) -> Option<&mut T>
+    where
+        T: HistoryCell + 'static,
+        F: FnOnce() -> T,
+    {
+        if !self.active_cell_is::<T>() {
+            self.flush_active_cell();
+            self.active_cell = Some(Box::new(new_cell()));
+            self.bump_active_cell_revision();
+        }
+
+        self.active_cell
+            .as_mut()
+            .and_then(|cell| cell.as_any_mut().downcast_mut::<T>())
+    }
+
+    fn ensure_active_thinking_cell(&mut self) -> Option<&mut history_cell::ThinkingBlockCell> {
+        if !self.inline_reasoning_blocks_enabled() {
+            return None;
+        }
+
+        let cwd = self.config.cwd.clone();
+        self.ensure_active_inline_cell(|| history_cell::new_active_thinking_block(&cwd))
+    }
+
+    fn seed_thinking_from_completed_message(&mut self, message: &str) {
+        if message.trim().is_empty() || self.stream_controller.is_some() {
+            return;
+        }
+
+        if let Some(cell) = self.ensure_active_thinking_cell()
+            && cell.is_empty()
+        {
+            cell.push_delta(message);
+            self.bump_active_cell_revision();
+        }
+    }
+
     fn on_agent_message_delta(&mut self, delta: String) {
+        if self.inline_reasoning_blocks_enabled()
+            && matches!(
+                self.active_agent_message_phase,
+                Some(MessagePhase::Commentary)
+            )
+        {
+            if let Some(cell) = self.ensure_active_thinking_cell() {
+                cell.push_delta(&delta);
+                self.bump_active_cell_revision();
+                self.request_redraw();
+            }
+            return;
+        }
+
         self.handle_streaming_delta(delta);
     }
 
@@ -2468,11 +2542,37 @@ impl ChatWidget {
         }
     }
 
-    fn on_agent_reasoning_delta(&mut self, delta: String) {
-        // For reasoning deltas, do not stream to history. Accumulate the
-        // current reasoning block and extract the first bold element
-        // (between **/**) as the chunk header. Show this header as status.
+    fn inline_reasoning_blocks_enabled(&self) -> bool {
+        self.config.tui_reasoning_blocks != ReasoningBlockMode::Off
+    }
+
+    fn should_consume_raw_reasoning(&self) -> bool {
+        self.config.show_raw_agent_reasoning
+            || self.config.tui_reasoning_blocks == ReasoningBlockMode::Raw
+    }
+
+    fn ensure_active_reasoning_cell(&mut self) -> Option<&mut history_cell::ReasoningBlockCell> {
+        if !self.inline_reasoning_blocks_enabled() {
+            return None;
+        }
+
+        let mode = self.config.tui_reasoning_blocks;
+        let cwd = self.config.cwd.clone();
+        self.ensure_active_inline_cell(|| history_cell::new_active_reasoning_block(mode, &cwd))
+    }
+
+    fn on_agent_reasoning_delta(&mut self, delta: String, source: ReasoningDeltaSource) {
+        // Keep buffering reasoning text so transcript-only history and the status header stay
+        // consistent even when inline blocks are disabled.
         self.reasoning_buffer.push_str(&delta);
+
+        if let Some(cell) = self.ensure_active_reasoning_cell() {
+            match source {
+                ReasoningDeltaSource::Summary => cell.push_summary_delta(&delta),
+                ReasoningDeltaSource::Raw => cell.push_raw_delta(&delta),
+            }
+            self.bump_active_cell_revision();
+        }
 
         if self.unified_exec_wait_streak.is_some() {
             // Unified exec waiting should take precedence over reasoning-derived status headers.
@@ -2481,19 +2581,38 @@ impl ChatWidget {
         }
 
         if let Some(header) = extract_first_bold(&self.reasoning_buffer) {
-            // Update the shimmer header to the extracted reasoning chunk header.
             self.terminal_title_status_kind = TerminalTitleStatusKind::Thinking;
             self.set_status_header(header);
-        } else {
-            // Fallback while we don't yet have a bold header: leave existing header as-is.
         }
         self.request_redraw();
     }
 
+    fn seed_reasoning_from_completed_item(&mut self, summary: &[String], content: &[String]) {
+        if !self.reasoning_buffer.is_empty() || !self.full_reasoning_buffer.is_empty() {
+            return;
+        }
+
+        for (index, delta) in summary.iter().enumerate() {
+            if index > 0 {
+                self.on_reasoning_section_break();
+            }
+            self.on_agent_reasoning_delta(delta.clone(), ReasoningDeltaSource::Summary);
+        }
+
+        if self.should_consume_raw_reasoning() {
+            for delta in content {
+                self.on_agent_reasoning_delta(delta.clone(), ReasoningDeltaSource::Raw);
+            }
+        }
+    }
+
     fn on_agent_reasoning_final(&mut self) {
-        // At the end of a reasoning block, record transcript-only content.
         self.full_reasoning_buffer.push_str(&self.reasoning_buffer);
-        if !self.full_reasoning_buffer.is_empty() {
+        if self.inline_reasoning_blocks_enabled() {
+            if self.active_cell_is::<history_cell::ReasoningBlockCell>() {
+                self.flush_active_cell();
+            }
+        } else if !self.full_reasoning_buffer.is_empty() {
             let cell = history_cell::new_reasoning_summary_block(
                 self.full_reasoning_buffer.clone(),
                 &self.config.cwd,
@@ -2506,10 +2625,14 @@ impl ChatWidget {
     }
 
     fn on_reasoning_section_break(&mut self) {
-        // Start a new reasoning block for header extraction and accumulate transcript.
         self.full_reasoning_buffer.push_str(&self.reasoning_buffer);
         self.full_reasoning_buffer.push_str("\n\n");
         self.reasoning_buffer.clear();
+
+        if let Some(cell) = self.ensure_active_reasoning_cell() {
+            cell.push_summary_section_break();
+            self.bump_active_cell_revision();
+        }
     }
 
     // Raw reasoning uses the same flow as summarized reasoning
@@ -2542,6 +2665,7 @@ impl ChatWidget {
             .set_interrupt_hint_visible(/*visible*/ true);
         self.terminal_title_status_kind = TerminalTitleStatusKind::Working;
         self.set_status_header(String::from("Working"));
+        self.active_agent_message_phase = None;
         self.full_reasoning_buffer.clear();
         self.reasoning_buffer.clear();
         self.request_redraw();
@@ -2583,6 +2707,9 @@ impl ChatWidget {
             self.add_boxed_history(cell);
         }
         self.flush_unified_exec_wait_streak();
+        if self.active_cell_is::<history_cell::ThinkingBlockCell>() {
+            self.flush_active_cell();
+        }
         if !from_replay {
             self.collect_runtime_metrics_delta();
             let runtime_metrics =
@@ -2609,6 +2736,7 @@ impl ChatWidget {
         }
         // Mark task stopped and request redraw now that all content is in history.
         self.pending_status_indicator_restore = false;
+        self.active_agent_message_phase = None;
         self.user_turn_pending_start = false;
         self.agent_turn_running = false;
         self.turn_sleep_inhibitor
@@ -3040,6 +3168,7 @@ impl ChatWidget {
         self.stream_controller = None;
         self.plan_stream_controller = None;
         self.pending_status_indicator_restore = false;
+        self.active_agent_message_phase = None;
         self.request_status_line_branch_refresh();
         self.maybe_show_pending_rate_limit_prompt();
     }
@@ -4603,13 +4732,29 @@ impl ChatWidget {
                 AgentMessageContent::Text { text } => message.push_str(text),
             }
         }
-        self.finalize_completed_assistant_message(
-            (!message.is_empty()).then_some(message.as_str()),
-        );
-        if matches!(item.phase, Some(MessagePhase::FinalAnswer) | None) && !message.is_empty() {
+        let phase = item
+            .phase
+            .clone()
+            .or(self.active_agent_message_phase.clone());
+
+        match phase {
+            Some(MessagePhase::Commentary) if self.inline_reasoning_blocks_enabled() => {
+                self.seed_thinking_from_completed_message(&message);
+                if self.active_cell_is::<history_cell::ThinkingBlockCell>() {
+                    self.flush_active_cell();
+                    self.request_redraw();
+                }
+            }
+            _ => self.finalize_completed_assistant_message(
+                (!message.is_empty()).then_some(message.as_str()),
+            ),
+        }
+
+        if matches!(phase, Some(MessagePhase::FinalAnswer) | None) && !message.is_empty() {
             self.record_agent_markdown(&message);
         }
-        self.pending_status_indicator_restore = match item.phase {
+        self.active_agent_message_phase = None;
+        self.pending_status_indicator_restore = match phase {
             // Models that don't support preambles only output AgentMessageItems on turn completion.
             Some(MessagePhase::FinalAnswer) | None => false,
             Some(MessagePhase::Commentary) => true,
@@ -5243,6 +5388,7 @@ impl ChatWidget {
             interrupts: InterruptManager::new(),
             reasoning_buffer: String::new(),
             full_reasoning_buffer: String::new(),
+            active_agent_message_phase: None,
             current_status: StatusIndicatorState::working(),
             pending_guardian_review_status: PendingGuardianReviewStatus::default(),
             active_hook_cell: None,
@@ -5308,9 +5454,6 @@ impl ChatWidget {
         widget
             .bottom_pane
             .set_realtime_conversation_enabled(widget.realtime_conversation_enabled());
-        widget
-            .bottom_pane
-            .set_audio_device_selection_enabled(widget.realtime_audio_device_selection_enabled());
         widget
             .bottom_pane
             .set_status_line_enabled(!widget.configured_status_line_items().is_empty());
@@ -6004,6 +6147,17 @@ impl ChatWidget {
             .personality
             .filter(|_| self.config.features.enabled(Feature::Personality))
             .filter(|_| self.current_model_supports_personality());
+        let reasoning_summary = if self.inline_reasoning_blocks_enabled()
+            || self.config.model_reasoning_summary.is_some()
+        {
+            Some(
+                self.config
+                    .model_reasoning_summary
+                    .unwrap_or(ReasoningSummary::Auto),
+            )
+        } else {
+            None
+        };
         let service_tier = match self.config.service_tier {
             Some(service_tier) => Some(Some(service_tier)),
             None if self.config.notices.fast_default_opt_out == Some(true) => Some(None),
@@ -6025,7 +6179,7 @@ impl ChatWidget {
             permission_profile,
             effective_mode.model().to_string(),
             effective_mode.reasoning_effort(),
-            /*summary*/ None,
+            reasoning_summary,
             service_tier,
             /*final_output_json_schema*/ None,
             collaboration_mode,
@@ -6239,14 +6393,7 @@ impl ChatWidget {
                 summary, content, ..
             } => {
                 if from_replay {
-                    for delta in summary {
-                        self.on_agent_reasoning_delta(delta);
-                    }
-                    if self.config.show_raw_agent_reasoning {
-                        for delta in content {
-                            self.on_agent_reasoning_delta(delta);
-                        }
-                    }
+                    self.seed_reasoning_from_completed_item(&summary, &content);
                 }
                 self.on_agent_reasoning_final();
             }
@@ -6571,11 +6718,11 @@ impl ChatWidget {
             }
             ServerNotification::PlanDelta(notification) => self.on_plan_delta(notification.delta),
             ServerNotification::ReasoningSummaryTextDelta(notification) => {
-                self.on_agent_reasoning_delta(notification.delta);
+                self.on_agent_reasoning_delta(notification.delta, ReasoningDeltaSource::Summary);
             }
             ServerNotification::ReasoningTextDelta(notification) => {
-                if self.config.show_raw_agent_reasoning {
-                    self.on_agent_reasoning_delta(notification.delta);
+                if self.should_consume_raw_reasoning() {
+                    self.on_agent_reasoning_delta(notification.delta, ReasoningDeltaSource::Raw);
                 }
             }
             ServerNotification::ReasoningSummaryPartAdded(_) => self.on_reasoning_section_break(),
@@ -6853,6 +7000,9 @@ impl ChatWidget {
         from_replay: bool,
     ) {
         match notification.item {
+            ThreadItem::AgentMessage { phase, .. } => {
+                self.on_agent_message_item_started(phase);
+            }
             ThreadItem::CommandExecution {
                 id,
                 command,
@@ -7121,13 +7271,15 @@ impl ChatWidget {
                 self.on_agent_message_delta(delta)
             }
             EventMsg::PlanDelta(event) => self.on_plan_delta(event.delta),
-            EventMsg::AgentReasoningDelta(AgentReasoningDeltaEvent { delta })
-            | EventMsg::AgentReasoningRawContentDelta(AgentReasoningRawContentDeltaEvent {
+            EventMsg::AgentReasoningDelta(AgentReasoningDeltaEvent { delta }) => {
+                self.on_agent_reasoning_delta(delta, ReasoningDeltaSource::Summary)
+            }
+            EventMsg::AgentReasoningRawContentDelta(AgentReasoningRawContentDeltaEvent {
                 delta,
-            }) => self.on_agent_reasoning_delta(delta),
+            }) => self.on_agent_reasoning_delta(delta, ReasoningDeltaSource::Raw),
             EventMsg::AgentReasoning(AgentReasoningEvent { .. }) => self.on_agent_reasoning_final(),
             EventMsg::AgentReasoningRawContent(AgentReasoningRawContentEvent { text }) => {
-                self.on_agent_reasoning_delta(text);
+                self.on_agent_reasoning_delta(text, ReasoningDeltaSource::Raw);
                 self.on_agent_reasoning_final();
             }
             EventMsg::AgentReasoningSectionBreak(_) => self.on_reasoning_section_break(),
@@ -7302,7 +7454,6 @@ impl ChatWidget {
                 }
             }
             EventMsg::RawResponseItem(_)
-            | EventMsg::ItemStarted(_)
             | EventMsg::AgentMessageContentDelta(_)
             | EventMsg::PatchApplyUpdated(_)
             | EventMsg::ReasoningContentDelta(_)
@@ -7342,6 +7493,11 @@ impl ChatWidget {
                 }
                 if let codex_protocol::items::TurnItem::AgentMessage(item) = item {
                     self.on_agent_message_item_completed(item);
+                }
+            }
+            EventMsg::ItemStarted(ItemStartedEvent { item, .. }) => {
+                if let codex_protocol::items::TurnItem::AgentMessage(item) = item {
+                    self.on_agent_message_item_started(item.phase);
                 }
             }
         }
@@ -8267,22 +8423,79 @@ impl ChatWidget {
     }
 
     pub(crate) fn open_realtime_audio_popup(&mut self) {
+        let mut items = vec![SelectionItem {
+            name: "Reasoning blocks".to_string(),
+            description: Some(format!(
+                "Current: {}",
+                Self::reasoning_block_mode_label(self.config.tui_reasoning_blocks)
+            )),
+            actions: vec![Box::new(|tx| {
+                tx.send(AppEvent::OpenReasoningBlocksSelection);
+            })],
+            dismiss_on_select: true,
+            ..Default::default()
+        }];
+
+        if self.realtime_audio_device_selection_enabled() {
+            items.extend(
+                [
+                    RealtimeAudioDeviceKind::Microphone,
+                    RealtimeAudioDeviceKind::Speaker,
+                ]
+                .into_iter()
+                .map(|kind| {
+                    let description = Some(format!(
+                        "Current: {}",
+                        self.current_realtime_audio_selection_label(kind)
+                    ));
+                    let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
+                        tx.send(AppEvent::OpenRealtimeAudioDeviceSelection { kind });
+                    })];
+                    SelectionItem {
+                        name: kind.title().to_string(),
+                        description,
+                        actions,
+                        dismiss_on_select: true,
+                        ..Default::default()
+                    }
+                }),
+            );
+        }
+
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            title: Some("Settings".to_string()),
+            subtitle: Some("Configure settings for Codex.".to_string()),
+            footer_hint: Some(standard_popup_hint_line()),
+            items,
+            ..Default::default()
+        });
+    }
+
+    pub(crate) fn open_reasoning_blocks_popup(&mut self) {
         let items = [
-            RealtimeAudioDeviceKind::Microphone,
-            RealtimeAudioDeviceKind::Speaker,
+            (
+                ReasoningBlockMode::Off,
+                "Keep reasoning out of the main chat.",
+            ),
+            (
+                ReasoningBlockMode::Summary,
+                "Show reasoning summaries inline while a turn is running.",
+            ),
+            (
+                ReasoningBlockMode::Raw,
+                "Show raw reasoning inline when the provider exposes it.",
+            ),
         ]
         .into_iter()
-        .map(|kind| {
-            let description = Some(format!(
-                "Current: {}",
-                self.current_realtime_audio_selection_label(kind)
-            ));
+        .map(|(mode, description)| {
             let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
-                tx.send(AppEvent::OpenRealtimeAudioDeviceSelection { kind });
+                tx.send(AppEvent::UpdateReasoningBlocks(mode));
+                tx.send(AppEvent::PersistReasoningBlocks(mode));
             })];
             SelectionItem {
-                name: kind.title().to_string(),
-                description,
+                name: Self::reasoning_block_mode_label(mode).to_string(),
+                description: Some(description.to_string()),
+                is_current: self.config.tui_reasoning_blocks == mode,
                 actions,
                 dismiss_on_select: true,
                 ..Default::default()
@@ -8290,9 +8503,14 @@ impl ChatWidget {
         })
         .collect();
 
+        let mut header = ColumnRenderable::new();
+        header.push(Line::from("Reasoning blocks".bold()));
+        header.push(Line::from(
+            "Choose whether reasoning is shown inline in the chat.".dim(),
+        ));
+
         self.bottom_pane.show_selection_view(SelectionViewParams {
-            title: Some("Settings".to_string()),
-            subtitle: Some("Configure settings for Codex.".to_string()),
+            header: Box::new(header),
             footer_hint: Some(standard_popup_hint_line()),
             items,
             ..Default::default()
@@ -9827,8 +10045,6 @@ impl ChatWidget {
             let realtime_conversation_enabled = self.realtime_conversation_enabled();
             self.bottom_pane
                 .set_realtime_conversation_enabled(realtime_conversation_enabled);
-            self.bottom_pane
-                .set_audio_device_selection_enabled(self.realtime_audio_device_selection_enabled());
             if !realtime_conversation_enabled && self.realtime_conversation.is_live() {
                 self.request_realtime_conversation_close(Some(
                     "Realtime voice mode was closed because the feature was disabled.".to_string(),
@@ -9934,6 +10150,28 @@ impl ChatWidget {
             mask.reasoning_effort = Some(effort);
         }
         self.refresh_model_dependent_surfaces();
+    }
+
+    pub(crate) fn set_reasoning_block_mode(&mut self, mode: ReasoningBlockMode) {
+        self.config.tui_reasoning_blocks = mode;
+        if mode == ReasoningBlockMode::Off
+            && (self.active_cell_is::<history_cell::ReasoningBlockCell>()
+                || self.active_cell_is::<history_cell::ThinkingBlockCell>())
+        {
+            self.active_cell = None;
+            self.bump_active_cell_revision();
+            self.request_redraw();
+            return;
+        }
+
+        if let Some(cell) = self.active_cell.as_mut().and_then(|cell| {
+            cell.as_any_mut()
+                .downcast_mut::<history_cell::ReasoningBlockCell>()
+        }) {
+            cell.set_mode(mode);
+            self.bump_active_cell_revision();
+            self.request_redraw();
+        }
     }
 
     /// Set the personality in the widget's config copy.
@@ -10083,6 +10321,14 @@ impl ChatWidget {
     fn current_realtime_audio_selection_label(&self, kind: RealtimeAudioDeviceKind) -> String {
         self.current_realtime_audio_device_name(kind)
             .unwrap_or_else(|| "System default".to_string())
+    }
+
+    fn reasoning_block_mode_label(mode: ReasoningBlockMode) -> &'static str {
+        match mode {
+            ReasoningBlockMode::Off => "Off",
+            ReasoningBlockMode::Summary => "Summary",
+            ReasoningBlockMode::Raw => "Raw",
+        }
     }
 
     fn sync_fast_command_enabled(&mut self) {

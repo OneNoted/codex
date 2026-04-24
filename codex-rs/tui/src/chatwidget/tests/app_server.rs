@@ -1,4 +1,6 @@
 use super::*;
+use codex_app_server_protocol::AgentMessageDeltaNotification;
+use codex_config::types::ReasoningBlockMode;
 use pretty_assertions::assert_eq;
 
 #[tokio::test]
@@ -346,6 +348,40 @@ async fn live_app_server_command_execution_strips_shell_wrapper() {
     assert_chatwidget_snapshot!(
         "live_app_server_command_execution_strips_shell_wrapper",
         blob
+    );
+}
+
+#[tokio::test]
+async fn live_app_server_commentary_renders_inline_block_snapshot() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.config.tui_reasoning_blocks = ReasoningBlockMode::Summary;
+
+    chat.handle_server_notification(
+        ServerNotification::ItemStarted(ItemStartedNotification {
+            thread_id: "thread-1".to_string(),
+            turn_id: "turn-1".to_string(),
+            item: AppServerThreadItem::AgentMessage {
+                id: "commentary-1".to_string(),
+                text: String::new(),
+                phase: Some(MessagePhase::Commentary),
+                memory_citation: None,
+            },
+        }),
+        /*replay_kind*/ None,
+    );
+    chat.handle_server_notification(
+        ServerNotification::AgentMessageDelta(AgentMessageDeltaNotification {
+            thread_id: "thread-1".to_string(),
+            turn_id: "turn-1".to_string(),
+            item_id: "commentary-1".to_string(),
+            delta: "## Exploring the repo\n\nInspecting the workspace layout first.".to_string(),
+        }),
+        /*replay_kind*/ None,
+    );
+
+    assert_chatwidget_snapshot!(
+        "live_app_server_commentary_renders_inline_block_snapshot",
+        active_blob(&chat)
     );
 }
 

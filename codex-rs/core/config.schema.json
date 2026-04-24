@@ -1913,6 +1913,14 @@
       ],
       "type": "string"
     },
+    "ReasoningBlockMode": {
+      "enum": [
+        "off",
+        "summary",
+        "raw"
+      ],
+      "type": "string"
+    },
     "ReasoningEffort": {
       "description": "See https://platform.openai.com/docs/guides/reasoning?api-mode=responses#get-started-with-reasoning",
       "enum": [
@@ -2205,6 +2213,15 @@
           ],
           "default": true,
           "description": "Enable desktop notifications from the TUI. Defaults to `true`."
+        },
+        "reasoning_blocks": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ReasoningBlockMode"
+            }
+          ],
+          "default": "off",
+          "description": "Controls whether reasoning is rendered as inline blocks in the TUI. Defaults to `off`."
         },
         "show_tooltips": {
           "default": true,
