@@ -1,0 +1,46 @@
+name: tag reasoning release
+
+on:
+  schedule:
+    - cron: '17 */2 * * *'
+  workflow_dispatch:
+    inputs:
+      upstream_tag:
+        description: Upstream release tag to package, for example rust-v0.128.0
+        required: false
+        type: string
+      patch_version:
+        description: Downstream patch version suffix
+        required: false
+        default: '1'
+        type: string
+
+concurrency:
+  group: codex-fork-tag-reasoning-release
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Create fork release tag
+        id: release
+        env:
+          UPSTREAM_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.upstream_tag || '' }}
+          PATCH_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.patch_version || '1' }}
+          VERIFY_COMMAND: cd codex-rs && cargo test -p codex-tui
+        run: ./.github/scripts/tag-reasoning-release.sh
+
+      - name: Explain release decision
+        run: |
+          printf 'should_release=%s\n' '${{ steps.release.outputs.should_release }}'
+          printf 'upstream_tag=%s\n' '${{ steps.release.outputs.upstream_tag }}'
+          printf 'fork_tag=%s\n' '${{ steps.release.outputs.fork_tag }}'
