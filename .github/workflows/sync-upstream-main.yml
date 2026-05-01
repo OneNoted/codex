@@ -1,0 +1,36 @@
+name: sync upstream main
+
+on:
+  schedule:
+    - cron: '7 */3 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: codex-fork-sync-upstream-main
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      actions: write
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.CODEX_SYNC_WORKFLOW_TOKEN || github.token }}
+
+      - name: Rebase fork main onto upstream main
+        id: sync
+        env:
+          SYNC_PUSH_TOKEN: ${{ secrets.CODEX_SYNC_WORKFLOW_TOKEN }}
+        run: ./.github/scripts/sync-upstream-main.sh
+
+      - name: Trigger repair workflow
+        if: steps.sync.outputs.sync_conflict == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run repair-upstream-sync.yml --repo "$GITHUB_REPOSITORY" --ref main
