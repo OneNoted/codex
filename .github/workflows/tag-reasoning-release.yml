@@ -2,7 +2,7 @@ name: tag reasoning release
 
 on:
   schedule:
-    - cron: '17 */2 * * *'
+    - cron: "17 */2 * * *"
   workflow_dispatch:
     inputs:
       upstream_tag:
@@ -12,7 +12,7 @@ on:
       patch_version:
         description: Downstream patch version suffix
         required: false
-        default: '1'
+        default: "1"
         type: string
 
 concurrency:
