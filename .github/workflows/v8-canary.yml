@@ -34,7 +34,15 @@ concurrency:
   cancel-in-progress: ${{ github.ref_name != 'main' }}
 
 jobs:
+  fork-compatibility:
+    name: Fork compatibility
+    if: github.repository != 'openai/codex'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Skipping upstream infrastructure workflow on fork."
+
   metadata:
+    if: github.repository == 'openai/codex'
     runs-on: ubuntu-latest
     outputs:
       v8_version: ${{ steps.v8_version.outputs.version }}
@@ -59,6 +67,7 @@ jobs:
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 
   build:
+    if: github.repository == 'openai/codex'
     name: Build ${{ matrix.target }}
     needs: metadata
     runs-on: ${{ matrix.runner }}
