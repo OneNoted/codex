@@ -6,7 +6,15 @@ on:
   pull_request: {}
 
 jobs:
+  fork-compatibility:
+    name: Fork compatibility
+    if: github.repository != 'openai/codex'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Skipping upstream infrastructure workflow on fork."
+
   python-sdk:
+    if: github.repository == 'openai/codex'
     runs-on:
       group: codex-runners
       labels: codex-linux-x64
@@ -42,6 +50,7 @@ jobs:
             '
 
   sdks:
+    if: github.repository == 'openai/codex'
     runs-on:
       group: codex-runners
       labels: codex-linux-x64
