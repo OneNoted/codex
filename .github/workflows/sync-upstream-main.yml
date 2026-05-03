@@ -21,11 +21,11 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
-          token: ${{ secrets.CODEX_SYNC_WORKFLOW_TOKEN || github.token }}
 
       - name: Rebase fork main onto upstream main
         id: sync
         env:
+          GITHUB_TOKEN: ${{ github.token }}
           SYNC_PUSH_TOKEN: ${{ secrets.CODEX_SYNC_WORKFLOW_TOKEN }}
         run: ./.github/scripts/sync-upstream-main.sh
 
