@@ -55,10 +55,16 @@ if git ls-remote --exit-code --refs --tags origin "refs/tags/$fork_tag" >/dev/nu
   exit 0
 fi
 
-echo "should_release=true" >> "${GITHUB_OUTPUT:-/dev/null}"
-
 git fetch origin "$branch_name"
 git fetch "$upstream_remote_name" "$branch_name" "refs/tags/$upstream_tag:refs/tags/$upstream_tag"
+
+if ! git merge-base --is-ancestor "$upstream_tag" "origin/$branch_name"; then
+  echo "should_release=false" >> "${GITHUB_OUTPUT:-/dev/null}"
+  echo "origin/$branch_name does not contain $upstream_tag yet; wait for sync-upstream-main before tagging"
+  exit 0
+fi
+
+echo "should_release=true" >> "${GITHUB_OUTPUT:-/dev/null}"
 
 base_ref="$upstream_tag"
 if [[ -n "$base_tag_override" ]]; then
