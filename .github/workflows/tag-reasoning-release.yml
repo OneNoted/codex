@@ -14,6 +14,14 @@ on:
         required: false
         default: "1"
         type: string
+      base_tag:
+        description: Existing fork tag to use as the release base, for example aur-v0.128.0-reasoning.1
+        required: false
+        type: string
+      downstream_commits:
+        description: Optional whitespace-separated downstream commits to apply instead of auto-detecting the full fork patch stack
+        required: false
+        type: string
 
 concurrency:
   group: codex-fork-tag-reasoning-release
@@ -36,6 +44,8 @@ jobs:
         env:
           UPSTREAM_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.upstream_tag || '' }}
           PATCH_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.patch_version || '1' }}
+          BASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.base_tag || '' }}
+          DOWNSTREAM_COMMITS: ${{ github.event_name == 'workflow_dispatch' && inputs.downstream_commits || '' }}
           VERIFY_COMMAND: cd codex-rs && cargo test -p codex-tui
         run: ./.github/scripts/tag-reasoning-release.sh
 

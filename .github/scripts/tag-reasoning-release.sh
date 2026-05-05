@@ -7,6 +7,8 @@ upstream_remote_url=${UPSTREAM_REMOTE_URL:-https://github.com/openai/codex.git}
 patch_version=${PATCH_VERSION:-1}
 verify_command=${VERIFY_COMMAND:-}
 upstream_tag_override=${UPSTREAM_TAG:-}
+base_tag_override=${BASE_TAG:-}
+downstream_commits_override=${DOWNSTREAM_COMMITS:-}
 
 git config user.name "${GIT_AUTHOR_NAME:-OneNoted Automation}"
 git config user.email "${GIT_AUTHOR_EMAIL:-notes@madeingotland.com}"
@@ -57,12 +59,53 @@ echo "should_release=true" >> "${GITHUB_OUTPUT:-/dev/null}"
 git fetch origin "$branch_name"
 git fetch "$upstream_remote_name" "$branch_name" "refs/tags/$upstream_tag:refs/tags/$upstream_tag"
 
+base_ref="$upstream_tag"
+if [[ -n "$base_tag_override" ]]; then
+  git fetch origin "refs/tags/$base_tag_override:refs/tags/$base_tag_override"
+  base_ref="$base_tag_override"
+elif [[ "$patch_version" =~ ^[0-9]+$ ]]; then
+  previous_fork_tag=$(
+    git ls-remote --refs --tags origin "refs/tags/aur-v${version}-reasoning.*" |
+      awk -F'reasoning[.]' -v patch_version="$patch_version" '
+        NF == 2 && $2 ~ /^[0-9]+$/ && $2 < patch_version { print $2 }
+      ' |
+      sort -n |
+      tail -n 1 |
+      awk -v version="$version" '{ print "aur-v" version "-reasoning." $1 }'
+  )
+
+  if [[ -n "$previous_fork_tag" ]]; then
+    git fetch origin "refs/tags/$previous_fork_tag:refs/tags/$previous_fork_tag"
+    base_ref="$previous_fork_tag"
+  fi
+fi
+
 release_branch="release/$fork_tag"
-git checkout -B "$release_branch" "$upstream_tag"
+git checkout -B "$release_branch" "$base_ref"
 
 upstream_ref="$upstream_remote_name/$branch_name"
 base=$(git merge-base "origin/$branch_name" "$upstream_ref")
-mapfile -t downstream_commits < <(git rev-list --reverse "$base..origin/$branch_name")
+if [[ -n "$downstream_commits_override" ]]; then
+  mapfile -t downstream_commits < <(tr '[:space:]' '\n' <<<"$downstream_commits_override" | sed '/^$/d')
+else
+  mapfile -t downstream_commits < <(git rev-list --reverse "$base..origin/$branch_name")
+fi
+
+commit_patch_id() {
+  git show --format= --find-renames "$1" |
+    git patch-id --stable |
+    awk '{ print $1 }'
+}
+
+declare -A applied_patch_ids=()
+if [[ "$base_ref" != "$upstream_tag" ]]; then
+  while IFS= read -r commit; do
+    patch_id=$(commit_patch_id "$commit")
+    if [[ -n "$patch_id" ]]; then
+      applied_patch_ids["$patch_id"]=1
+    fi
+  done < <(git rev-list "$upstream_tag..$base_ref")
+fi
 
 for commit in "${downstream_commits[@]}"; do
   mapfile -t changed_paths < <(git diff-tree --no-commit-id --name-only -r "$commit")
@@ -83,7 +126,13 @@ for commit in "${downstream_commits[@]}"; do
     continue
   fi
 
-  git cherry-pick "$commit"
+  patch_id=$(commit_patch_id "$commit")
+  if [[ -n "$patch_id" && -n "${applied_patch_ids[$patch_id]:-}" ]]; then
+    echo "skipping already-applied downstream commit $commit"
+    continue
+  fi
+
+  git cherry-pick --empty=drop "$commit"
 done
 
 if [[ -n "$verify_command" ]]; then
