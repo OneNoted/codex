@@ -51,6 +51,7 @@ jobs:
           DOWNSTREAM_COMMITS: ${{ github.event_name == 'workflow_dispatch' && inputs.downstream_commits || '' }}
           VERIFY_COMMAND: cd codex-rs && cargo test -p codex-tui
           RUST_MIN_STACK: "8388608"
+          TAG_PUSH_TOKEN: ${{ secrets.CODEX_SYNC_WORKFLOW_TOKEN }}
         run: ./.github/scripts/tag-reasoning-release.sh
 
       - name: Explain release decision
