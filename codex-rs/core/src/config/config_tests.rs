@@ -7616,6 +7616,44 @@ model_verbosity = "high"
     })
 }
 
+#[tokio::test]
+async fn defaults_to_showing_raw_agent_reasoning() -> std::io::Result<()> {
+    let fixture = create_test_fixture()?;
+    let config = Config::load_from_base_config_with_overrides(
+        fixture.cfg.clone(),
+        ConfigOverrides {
+            cwd: Some(fixture.cwd_path()),
+            ..Default::default()
+        },
+        fixture.codex_home(),
+    )
+    .await?;
+
+    assert!(config.show_raw_agent_reasoning);
+    Ok(())
+}
+
+#[tokio::test]
+async fn explicit_config_can_hide_raw_agent_reasoning() -> std::io::Result<()> {
+    let fixture = create_test_fixture()?;
+    let cfg = ConfigToml {
+        show_raw_agent_reasoning: Some(false),
+        ..fixture.cfg.clone()
+    };
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides {
+            cwd: Some(fixture.cwd_path()),
+            ..Default::default()
+        },
+        fixture.codex_home(),
+    )
+    .await?;
+
+    assert!(!config.show_raw_agent_reasoning);
+    Ok(())
+}
+
 /// Users can specify config values at multiple levels that have the
 /// following precedence:
 ///
@@ -7707,7 +7745,7 @@ async fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             main_execve_wrapper_exe: None,
             zsh_path: None,
             hide_agent_reasoning: false,
-            show_raw_agent_reasoning: false,
+            show_raw_agent_reasoning: true,
             model_reasoning_effort: Some(ReasoningEffort::High),
             plan_mode_reasoning_effort: None,
             model_reasoning_summary: Some(ReasoningSummary::Detailed),
@@ -8158,7 +8196,7 @@ async fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         main_execve_wrapper_exe: None,
         zsh_path: None,
         hide_agent_reasoning: false,
-        show_raw_agent_reasoning: false,
+        show_raw_agent_reasoning: true,
         model_reasoning_effort: None,
         plan_mode_reasoning_effort: None,
         model_reasoning_summary: None,
@@ -8323,7 +8361,7 @@ async fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         main_execve_wrapper_exe: None,
         zsh_path: None,
         hide_agent_reasoning: false,
-        show_raw_agent_reasoning: false,
+        show_raw_agent_reasoning: true,
         model_reasoning_effort: None,
         plan_mode_reasoning_effort: None,
         model_reasoning_summary: None,
@@ -8473,7 +8511,7 @@ async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         main_execve_wrapper_exe: None,
         zsh_path: None,
         hide_agent_reasoning: false,
-        show_raw_agent_reasoning: false,
+        show_raw_agent_reasoning: true,
         model_reasoning_effort: Some(ReasoningEffort::High),
         plan_mode_reasoning_effort: None,
         model_reasoning_summary: Some(ReasoningSummary::Detailed),
