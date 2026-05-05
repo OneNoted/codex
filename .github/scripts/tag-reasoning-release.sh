@@ -9,6 +9,7 @@ verify_command=${VERIFY_COMMAND:-}
 upstream_tag_override=${UPSTREAM_TAG:-}
 base_tag_override=${BASE_TAG:-}
 downstream_commits_override=${DOWNSTREAM_COMMITS:-}
+tag_push_token=${TAG_PUSH_TOKEN:-}
 
 git config user.name "${GIT_AUTHOR_NAME:-OneNoted Automation}"
 git config user.email "${GIT_AUTHOR_EMAIL:-notes@madeingotland.com}"
@@ -140,4 +141,7 @@ if [[ -n "$verify_command" ]]; then
 fi
 
 git tag "$fork_tag"
+if [[ -n "$tag_push_token" && -n "${GITHUB_REPOSITORY:-}" ]]; then
+  git remote set-url origin "https://x-access-token:${tag_push_token}@github.com/${GITHUB_REPOSITORY}.git"
+fi
 git push origin "refs/tags/$fork_tag"
