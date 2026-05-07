@@ -1,0 +1,68 @@
+name: repair upstream sync
+
+on:
+  workflow_run:
+    workflows: ["sync upstream main"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      repair_branch:
+        description: Optional branch name for the repair PR
+        required: false
+        type: string
+      repair_model:
+        description: Model to use for automated conflict repair
+        required: false
+        default: gpt-5.4
+        type: string
+
+concurrency:
+  group: codex-fork-repair-upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
+      SYNC_PUSH_TOKEN: ${{ secrets.CODEX_SYNC_WORKFLOW_TOKEN }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      REPAIR_BRANCH: ${{ github.event_name == 'workflow_dispatch' && inputs.repair_branch || '' }}
+      REPAIR_MODEL: ${{ github.event_name == 'workflow_dispatch' && inputs.repair_model || 'gpt-5.4' }}
+      RUST_MIN_STACK: "8388608"
+      VERIFY_COMMAND: >-
+        cd codex-rs &&
+        cargo test -p codex-core show_raw_agent_reasoning &&
+        cargo test -p codex-tui
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libcap-dev pkg-config
+
+      - name: Install repair CLI
+        if: env.OPENAI_API_KEY != ''
+        run: npm install -g @openai/codex
+
+      - name: Explain missing repair secret
+        if: env.OPENAI_API_KEY == ''
+        run: |
+          {
+            echo '### Upstream sync repair skipped'
+            echo
+            echo 'OPENAI_API_KEY is not configured for this repository.'
+            echo 'Add it as a repository secret to enable automatic conflict repair PRs.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Repair upstream sync
+        if: env.OPENAI_API_KEY != ''
+        run: ./.github/scripts/repair-upstream-sync.sh
