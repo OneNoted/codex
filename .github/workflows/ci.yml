@@ -42,6 +42,17 @@ jobs:
       # stage_npm_packages.py requires DotSlash when staging releases.
       - uses: facebook/install-dotslash@1e4e7b3e07eaca387acb98f1d4720e0bee8dbb6a # v2
 
+      - name: Install GitHub CLI
+        if: github.repository == 'OneNoted/codex'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v gh >/dev/null 2>&1; then
+            exit 0
+          fi
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gh
+
       - name: Stage npm package
         id: stage_npm_package
         env:
