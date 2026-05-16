@@ -14,7 +14,7 @@ permissions:
 jobs:
   codespell:
     name: Check for spelling errors
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.repository == 'OneNoted/codex' && 'apollo-codex' || 'ubuntu-latest' }}
 
     steps:
       - name: Checkout
