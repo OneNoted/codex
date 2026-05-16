@@ -6,7 +6,7 @@ on:
 
 jobs:
   build-test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.repository == 'OneNoted/codex' && 'apollo-codex' || 'ubuntu-latest' }}
     timeout-minutes: 10
     env:
       NODE_OPTIONS: --max-old-space-size=4096
@@ -41,9 +41,11 @@ jobs:
 
       # stage_npm_packages.py requires DotSlash when staging releases.
       - uses: facebook/install-dotslash@1e4e7b3e07eaca387acb98f1d4720e0bee8dbb6a # v2
+        if: github.repository != 'OneNoted/codex'
 
       - name: Stage npm package
         id: stage_npm_package
+        if: github.repository != 'OneNoted/codex'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -66,6 +68,7 @@ jobs:
           echo "pack_output=$PACK_OUTPUT" >> "$GITHUB_OUTPUT"
 
       - name: Upload staged npm package artifact
+        if: github.repository != 'OneNoted/codex'
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: codex-npm-staging
