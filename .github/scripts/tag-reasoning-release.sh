@@ -58,16 +58,20 @@ fi
 git fetch origin "$branch_name"
 git fetch "$upstream_remote_name" "$branch_name" "refs/tags/$upstream_tag:refs/tags/$upstream_tag"
 
+tag_synced_main=false
 if git merge-base --is-ancestor "$upstream_tag" "origin/$branch_name"; then
   echo "origin/$branch_name contains $upstream_tag"
 else
-  echo "origin/$branch_name does not contain $upstream_tag; applying downstream patches onto the release tag directly"
+  tag_synced_main=true
+  echo "origin/$branch_name does not contain $upstream_tag; tagging synced $branch_name directly"
 fi
 
 echo "should_release=true" >> "${GITHUB_OUTPUT:-/dev/null}"
 
 base_ref="$upstream_tag"
-if [[ -n "$base_tag_override" ]]; then
+if [[ "$tag_synced_main" == "true" ]]; then
+  base_ref="origin/$branch_name"
+elif [[ -n "$base_tag_override" ]]; then
   git fetch origin "refs/tags/$base_tag_override:refs/tags/$base_tag_override"
   base_ref="$base_tag_override"
 elif [[ "$patch_version" =~ ^[0-9]+$ ]]; then
@@ -92,7 +96,9 @@ git checkout -B "$release_branch" "$base_ref"
 
 upstream_ref="$upstream_remote_name/$branch_name"
 base=$(git merge-base "origin/$branch_name" "$upstream_ref")
-if [[ -n "$downstream_commits_override" ]]; then
+if [[ "$tag_synced_main" == "true" ]]; then
+  downstream_commits=()
+elif [[ -n "$downstream_commits_override" ]]; then
   mapfile -t downstream_commits < <(tr '[:space:]' '\n' <<<"$downstream_commits_override" | sed '/^$/d')
 else
   mapfile -t downstream_commits < <(git rev-list --reverse "$base..origin/$branch_name")
@@ -105,7 +111,7 @@ commit_patch_id() {
 }
 
 declare -A applied_patch_ids=()
-if [[ "$base_ref" != "$upstream_tag" ]]; then
+if [[ "$tag_synced_main" != "true" && "$base_ref" != "$upstream_tag" ]]; then
   while IFS= read -r commit; do
     patch_id=$(commit_patch_id "$commit")
     if [[ -n "$patch_id" ]]; then
