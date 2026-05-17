@@ -121,10 +121,11 @@ for commit in "${downstream_commits[@]}"; do
   fi
 
   only_ci=true
+  non_ci_paths=()
   for path in "${changed_paths[@]}"; do
     if [[ "$path" != .github/* ]]; then
       only_ci=false
-      break
+      non_ci_paths+=("$path")
     fi
   done
 
@@ -139,7 +140,21 @@ for commit in "${downstream_commits[@]}"; do
     continue
   fi
 
-  git cherry-pick --empty=drop "$commit"
+  if ((${#non_ci_paths[@]} == ${#changed_paths[@]})); then
+    git cherry-pick --empty=drop "$commit"
+    continue
+  fi
+
+  echo "applying non-CI paths from mixed downstream commit $commit"
+  git show --format= --find-renames "$commit" -- "${non_ci_paths[@]}" |
+    git apply --index --3way
+
+  if git diff --cached --quiet; then
+    echo "skipping empty non-CI patch from $commit"
+    continue
+  fi
+
+  git commit --reuse-message="$commit"
 done
 
 if [[ -n "$verify_command" ]]; then
