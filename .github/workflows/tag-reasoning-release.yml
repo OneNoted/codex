@@ -3,6 +3,9 @@ name: tag reasoning release
 on:
   schedule:
     - cron: "17 */2 * * *"
+  workflow_run:
+    workflows: ["sync upstream main"]
+    types: [completed]
   workflow_dispatch:
     inputs:
       upstream_tag:
@@ -29,6 +32,7 @@ concurrency:
 
 jobs:
   tag:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 180
     permissions:
@@ -59,3 +63,17 @@ jobs:
           printf 'should_release=%s\n' '${{ steps.release.outputs.should_release }}'
           printf 'upstream_tag=%s\n' '${{ steps.release.outputs.upstream_tag }}'
           printf 'fork_tag=%s\n' '${{ steps.release.outputs.fork_tag }}'
+
+      - name: Dispatch source package release
+        if: steps.release.outputs.should_release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.CODEX_SYNC_WORKFLOW_TOKEN }}
+          FORK_TAG: ${{ steps.release.outputs.fork_tag }}
+        run: gh workflow run release.yml --repo OneNoted/openai-codex-reasoning --field fork_tag="$FORK_TAG"
+
+      - name: Dispatch binary package release
+        if: steps.release.outputs.should_release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.CODEX_SYNC_WORKFLOW_TOKEN }}
+          FORK_TAG: ${{ steps.release.outputs.fork_tag }}
+        run: gh workflow run release.yml --repo OneNoted/openai-codex-reasoning-bin --field fork_tag="$FORK_TAG"

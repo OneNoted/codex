@@ -58,10 +58,10 @@ fi
 git fetch origin "$branch_name"
 git fetch "$upstream_remote_name" "$branch_name" "refs/tags/$upstream_tag:refs/tags/$upstream_tag"
 
-if ! git merge-base --is-ancestor "$upstream_tag" "origin/$branch_name"; then
-  echo "should_release=false" >> "${GITHUB_OUTPUT:-/dev/null}"
-  echo "origin/$branch_name does not contain $upstream_tag yet; wait for sync-upstream-main before tagging"
-  exit 0
+if git merge-base --is-ancestor "$upstream_tag" "origin/$branch_name"; then
+  echo "origin/$branch_name contains $upstream_tag"
+else
+  echo "origin/$branch_name does not contain $upstream_tag; applying downstream patches onto the release tag directly"
 fi
 
 echo "should_release=true" >> "${GITHUB_OUTPUT:-/dev/null}"
